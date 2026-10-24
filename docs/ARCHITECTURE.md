@@ -40,10 +40,10 @@ Public unless noted. Field lists are the contract; add fields only by editing th
 - `reentry_object`: `id`, `name`, `norad_id`, `source` (`TIP` | `REPLAY`), `window_start`, `window_end`, `elements` (JSON/GP fields), `status`, `updated_at`
 - `sighting`: `id`, `object_id`, `lat`, `lon`, `observed_at`, `bearing_deg?`, `clip_ref?`, `reporter` (identity), `mode` (`DEMO` | `LIVE`), `verdict` (`PENDING` | `ACCEPTED` | `HELD` | `REJECTED`), `reason`
 - `corridor`: `object_id` (unique), `version`, `bands` (JSON array of `{level, polygon}`), `area_km2_90`, `n_samples`, `n_sightings_used`, `computed_at`
-- `compute_status`: `worker` (identity), `variants_run_total`, `last_job_ms`, `sightings_classified`, `healthy`
+- `compute_status`: `worker` (identity), `variants_run_total`, `last_job_ms`, `sightings_classified`, `healthy`, `gpu_name`, `updated_at` (heartbeat; UI treats a stale row as unhealthy)
 - `feed_status`: `feed`, `last_ok_at`, `last_error`, `rows_ingested`
-- `replay_state`: `running`, `t_offset`, `event_id`
-- `worker_registry` (private): identity allowed to write verdicts, corridors and compute status
+- `replay_state`: single row `id`=0, `running`, `t_offset` (s), `event_id`, `started_at` (clients compute the replay clock as `t_offset + (now - started_at)`)
+- `worker_registry` (private): `identity`, `role` (`worker` | `poller` | `operator`)
 
 ## Reducers
 | Reducer | Who may call | Effect |
@@ -54,9 +54,12 @@ Public unless noted. Field lists are the contract; add fields only by editing th
 | `publish_corridor` | worker | replace the object's `corridor` row |
 | `report_compute_status` | worker | update `compute_status` |
 | `start_replay`, `reset_demo` | operator | drive the demo, clear demo sightings, reset corridor |
-| `register_worker` | owner, once | store worker identity in `worker_registry` |
+| `report_feed_status` | poller, operator | upsert `feed_status` (ok resets the error, adds to `rows_ingested`) |
+| `register_worker` | first caller per role, or an operator | store `(identity, role)` in `worker_registry` |
 
-Identity checks: confirm the exact SpacetimeDB identity API in the docs during Phase 1 (**check**). If it is awkward, use a single trusted worker identity compared inside the reducer and document the limit.
+Identity checks (verified against the `spacetimedb` 2.13 npm package source): reducers read `ctx.sender` (an `Identity`) and look it up in `worker_registry`. Each role is claimed by the first identity that calls `register_worker(role)`; an operator can reassign. Limit: first caller wins, so the bridge, poller and operator console register before the demo opens. `ingest_object` accepts poller or operator (the operator seeds the replay object).
+
+Naming: module code uses camelCase (`submitSighting`, `objectId`); SpacetimeDB's default case policy stores them as the snake_case names above.
 
 ## One sighting, end to end
 1. Phone → `submit_sighting` → `PENDING` row; big screen shows a grey pin.

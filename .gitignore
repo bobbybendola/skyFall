@@ -10,3 +10,4 @@ spacetime.local.json
 *.log
 .DS_Store
 data/raw/
+*.token
