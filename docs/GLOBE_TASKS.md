@@ -41,15 +41,22 @@ Branch each of G2–G4 from `feat/globe-3d` once G1 is merged to main (or from t
 - Clock: `viewer.clock` (real time; the timeline spans now − 1 h → now + 4 days).
 - Material colors: `MATERIAL_COLOR` in `debrisTypes.ts`.
 
-## G2: lines to landing points + impact zones (teammate 2)
-- [ ] For the selected satellite: a **line from the satellite to each predicted landing point**, one per component (or per sampled impact).
+## G2: lines to landing points + impact zones (teammate 2; done in PR from `feat/globe-debris-lines`)
+- [x] For the selected satellite: a **line from the satellite to each predicted landing point**, one per component (or per sampled impact).
   - Color by material: steel = blue-grey, titanium = white, aluminium = orange, CFRP = black, other = purple.
   - Opacity and width by `p_survive`. Lines follow the satellite as it moves.
-- [ ] Impact zones on the surface: each component's 50/90% footprint polygons (`debris_component.footprint`), plus the combined footprint (`debris_forecast.footprint`). Clamped to the ground; translucent fill + outline.
-- [ ] Hover/click a line or zone → show component, material, survive %, mass, impact energy (tooltip; G4 owns the panel).
-- [ ] Toggle: "show only pieces with ≥ 10% survival".
+- [x] Impact zones on the surface: each component's 50/90% footprint polygons (`debris_component.footprint`), plus the combined footprint (`debris_forecast.footprint`). Clamped to the ground; translucent fill + outline.
+- [x] Hover/click a line or zone → show component, material, survive %, mass, impact energy (tooltip; G4 owns the panel).
+- [x] Toggle: "show only pieces with ≥ 10% survival".
 - Data: mock first (`mock/debris.ts`), then `useTable(tables.debrisComponent)` filtered by `objectId` once R3's schema lands.
-- **Done when:** selecting a satellite shows colored lines to landing zones, and the zones read clearly from orbit height and when zoomed in.
+- **Done when:** selecting a satellite shows colored lines to landing zones, and the zones read clearly from orbit height and when zoomed in. ✅ (checked in headless Chrome against live objects + mock debris)
+
+**How G2 works (for G3/G4 and the live-data switch):**
+- One call in `Globe.tsx`: `const debrisUi = useDebrisLines(viewer, debris)`, rendered as `{debrisUi}` (toggle + MOCK/modeled label + tooltip). Files: `globe/debrisLines.ts` (lines, landing markers, hover/click), `globe/impactZones.ts` (zones), `globe/debrisPick.ts` (toggle + tooltip stores, `materialColor`), `globe/debrisOverlay.tsx` + `.css`.
+- **Where a line starts:** the landing zones belong to the forecast re-entry time, but the satellite may be anywhere on its orbit at the current clock time. A line starts at the live satellite (G1's `selected-orbit:<id>` entity) while its landing point is above the satellite's horizon (e.g. when the clock is at break-up), otherwise at `debris.breakup`, so lines never cut through the Earth.
+- Landing point per component: `impact` (mock), else the real `/debris` `footprint.center` (`[lon, lat]`). If the real `footprint.samples` are present, up to 12 faint extra lines per component show the spread.
+- Each layer is its own `CustomDataSource` (`g2-debris-lines`, `g2-impact-zones`), removed when the selection changes. Clicking a G2 line/zone pins its tooltip and does not change the selection.
+- **Shape mismatch to fix when the tables land (in `debris.ts`, not in consumers):** `debrisTypes.ts` has `mass_kg: {start, mean}`, `impact: {lat, lon}` and `breakup`; the real `/debris` result has `mass_kg_start` + `mass_kg: {mean, p05, p95}`, `footprint.center: [lon, lat]`, and `entry_time` (80 km crossing) instead of `breakup`. Example of the real shape: `services/gx10-compute/examples/debris-example.json` (R2, branch `feat/debris-physics`).
 
 ## G3: falling-debris animation, live pieces, satellite camera (teammate 3)
 - [ ] Falling paths: for the selected object, turn `debris_track.points` (`[t, lat, lon, alt_km]`) into Cesium time-dynamic positions (`SampledPositionProperty`) so pieces fall in 3D as the clock plays.
