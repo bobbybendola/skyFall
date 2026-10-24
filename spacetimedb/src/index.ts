@@ -635,6 +635,7 @@ export const claimJob = spacetimedb.reducer({}, ctx => {
   requireRole(ctx, 'worker');
   const me = ctx.db.computeStatus.worker.find(ctx.sender);
   if (!me) throw new SenderError('send report_compute_status first');
+  if (!me.healthy) return; // compute down or heartbeat stale: leave work for others
   if (me.tier === 'cpu') {
     const gpuUp = [...ctx.db.computeStatus.iter()].some(w => w.tier === 'gpu' && w.healthy);
     if (gpuUp) return;
