@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+
+// maplibre-gl 6 finds its worker relative to its own file, which breaks once
+// Vite bundles it. Point it at the worker explicitly.
+maplibregl.setWorkerUrl(workerUrl);
 
 // Plain prototype basemap (OpenStreetMap raster tiles, attribution required).
 const STYLE: maplibregl.StyleSpecification = {
