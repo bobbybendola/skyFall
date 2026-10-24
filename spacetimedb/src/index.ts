@@ -21,6 +21,7 @@ const CELESTRAK_EVERY = 2n * 3600n * SEC;
 const CELESTRAK_MIN_GAP = 2n * 3600n * SEC; // CelesTrak 403s repeat downloads inside one update
 const LEASE = 10n * SEC; // a claimed job not finished by then goes back to the queue
 const HEARTBEAT_STALE = 10n * SEC;
+const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
 const MIN_SUBMIT_GAP = 2n * SEC; // per reporter, LIVE/DEMO only
 const HOLD_BELOW_P = 0.2; // compute's inlier probability below this -> HELD
@@ -807,6 +808,10 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
     });
   }
   for (const w of [...ctx.db.computeStatus.iter()]) {
+    if (olderThan(ctx, w.updatedAt, WORKER_FORGET)) {
+      ctx.db.computeStatus.worker.delete(w.worker); // gone for good: drop it from the panel
+      continue;
+    }
     if (w.healthy && olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) {
       ctx.db.computeStatus.worker.update({ ...w, healthy: false });
     }

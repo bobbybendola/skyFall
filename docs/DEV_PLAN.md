@@ -24,12 +24,14 @@ Follow `docs/SETUP.md` sections A and D.
 ## Phase 1: Database-first skeleton (h2 to h6)
 - [x] `spacetimedb/`: all tables, reducers, scheduled reducers, procedures and the view from ARCHITECTURE.md (typechecks against spacetimedb 2.13)
 - [x] `gx10-compute`: `/health`, stub `/classify`, stub `/update` (ground-track corridor that shrinks with sightings, constant scores)
-- [ ] Publish; generate bindings for `web/` and `services/gx10-bridge/`
-- [ ] `tools/demo-ctl`: register operator, approve workers, seed the replay object, load a script, start/pause/reset
-- [ ] `services/gx10-bridge` (worker): heartbeat, claim → compute → `set_verdict` / `publish_corridor`, `fail_job` on errors; `WORKER_TIER=gpu|cpu`
-- [ ] `web/`: MapLibre map from `corridor`; pins from `sighting`; `/report` calls `submit_sighting`; worker + queue panel
+- [x] Publish to maincloud (`skyfall-calhacks`); bindings generated and committed for `web/`, `services/gx10-bridge/`, `tools/demo-ctl/`
+- [x] `tools/demo-ctl`: operator (your `spacetime login` identity), approve workers, seed, script, start/pause/reset, poll, status
+- [x] `services/gx10-bridge` (worker): heartbeat, claim → compute → `set_verdict` / `publish_corridor`, `fail_job` on errors; `WORKER_TIER=gpu|cpu`
+- [x] `web/` (plain prototype styling): map with corridor, track, pins, 70 real CelesTrak objects via SGP4; `/report`; corridor history, worker, queue, feed and space-weather panels
+- [ ] GX10 runs the `gpu` worker (laptop stood in for the test)
+- [ ] Phones on venue Wi-Fi: host the web app somewhere reachable (dev server works on the same network only)
 
-**Checkpoint:** (1) a phone tap shows a pin and the corridor changes on the big screen within about 2 seconds; (2) kill the GPU worker mid-run and the CPU worker takes over within about 12 seconds with no manual step. This is already a demo.
+**Checkpoint (passed Oct 24 with a laptop as the GPU worker):** (1) sighting → corridor change on the big screen in 0.39 s; (2) GPU worker killed → CPU worker took over in 7 s, no manual step. Re-run with the GX10.
 
 ## Phase 2: Real simulation (h6 to h14)
 - [ ] Sampling, propagation, likelihood weighting, corridor extraction on the GPU (see `docs/SIM_SPEC.md`), with per-sighting `trust` and returned `p_inlier` scores

@@ -50,6 +50,21 @@ Do these in order. Items marked **(blocking)** stop the build until done. Put ev
 11. **CPU fallback worker**: any laptop. Runs `gx10-compute` with `USE_GPU=0` and the worker with `WORKER_TIER=cpu`.
 12. **Local tools**: Node 22+ and Python 3.11+ on each laptop.
 
+## E0. Running things (current)
+Database: `skyfall-calhacks` on maincloud, already published and seeded. Bindings are committed, so only the operator laptop needs the CLI.
+```bash
+# compute (GX10, or USE_GPU=0 on a laptop)
+cd services/gx10-compute && uvicorn app:app --host 127.0.0.1 --port 8000
+# worker: prints its identity, then waits for approval
+cd services/gx10-bridge && npm ci && WORKER_TIER=gpu npm start      # cpu on the fallback laptop
+# operator laptop (uses your spacetime login)
+cd tools/demo-ctl && npm ci && npm start -- approve <identity-hex>
+npm start -- status
+# web
+cd web && npm ci && npm run dev      # / big screen, /report phone page
+```
+The worker keeps its identity in `services/gx10-bridge/.gpu.token` / `.cpu.token` (git-ignored). Never run two copies with the same token: the second one's results are refused.
+
 ## E. First run, once the CLI works (in order)
 ```bash
 cd spacetimedb && npm install

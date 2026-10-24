@@ -107,7 +107,8 @@ Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `spacet
 
 Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so clients cannot trigger them directly.
 
-**Verified vs check.** Verified against the `spacetimedb` 2.13 npm package source: `ctx.sender`/`Identity`, scheduled tables (`t.scheduleAt()`, `{ onSchedule }`), procedures with `ctx.http.fetch` and `ctx.withTx`, views with `ctx.sender`. **Check** when the CLI is installed: that outbound HTTP from procedures works on the local server and on maincloud, the first-fire time of interval schedules, and the CLI flags for publishing. If procedure HTTP is unavailable, `feed-poller` takes over NOAA and CelesTrak through `ingest_object` / `report_feed_status`, and the docs get updated.
+**Verified on maincloud (Oct 24, CLI 2.13):** the module publishes as `skyfall-calhacks`; procedures fetch NOAA and CelesTrak over HTTP and write in the same call; interval schedules fire about one interval after publish (so `poll` once after a fresh publish); a client reducer that throws `SenderError` rejects the caller's promise; a second worker holding the same identity is refused by `claim_job`'s lease check. Measured: sighting → new corridor on the big screen in 0.39 s (stub compute); GPU worker killed → CPU worker finished the next job 7 s later. NOAA's `10cm-flux.json` is a one-element array, not an object.
+**Still check:** procedure HTTP on a local `spacetime start` server (only matters if we fall back to local).
 
 ## One sighting, end to end
 1. Phone → `submit_sighting`. The module validates it and rate-limits per identity. No clip → `ACCEPTED` + one coalesced `UPDATE` job. Clip → `PENDING` + a `CLASSIFY` job. Every screen shows the pin at once.
