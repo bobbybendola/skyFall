@@ -24,6 +24,9 @@ Branch each of G2–G4 from `feat/globe-3d` once G1 is merged to main (or from t
 ---
 
 ## G1: globe core (not started; do this first)
+**Data for G1: read `docs/SPACETRACK_NOTES.md`** (the ~31k-object catalog with type and radar size, TIP re-entry markers, rate limits).
+- [ ] Whole-catalog layer: ~31k objects colored by type (payload / rocket body / debris), sized by radar size, with filter toggles; decaying objects highlighted (needs R3's `catalog_object`; until then use `reentry_object`)
+- [ ] TIP markers for objects with an official re-entry prediction (`DECAY_EPOCH ± WINDOW`; the point is 10 km up, not an impact)
 - [ ] Add CesiumJS to `web/` (copy its Workers/Assets/Widgets to `web/public/cesium` with a small script, set `CESIUM_BASE_URL`), offline Natural Earth imagery, no Cesium ion account
 - [ ] `GlobeView`: one Cesium Viewer for the whole app. Exposes the viewer through context (`useViewer()`); timeline + animation widgets on; real-time clock by default
 - [ ] Satellites: every `reentry_object` with orbit elements as a point at its **real altitude** (SGP4 from `orbit.ts`), updated with the Cesium clock (so scrubbing the timeline moves them). Color by forecast re-entry time (soon = red → later = yellow; no forecast = grey); one point collection for speed
