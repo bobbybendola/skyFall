@@ -146,7 +146,7 @@ export function SelectedCard({
       )}
       {debris && (
         <div>
-          {debris.source === 'mock' && <span className="mock">MOCK</span>} debris: {Math.round(debris.p_any_survives * 100)}% chance any piece survives ·{' '}
+          {debris.source === 'mock' ? <span className="mock">MOCK</span> : <span className="muted">modeled estimate ({debris.archetype}) ·</span>} debris: {Math.round(debris.p_any_survives * 100)}% chance any piece survives ·{' '}
           {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
         </div>
       )}

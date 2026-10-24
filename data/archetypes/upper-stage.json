@@ -1,0 +1,17 @@
+{
+  "id": "upper-stage",
+  "name": "Rocket upper stage (generic liquid stage)",
+  "applies_to": {"object_type": ["R/B"], "priority": 5},
+  "confidence": "low",
+  "sources": [
+    "Large stages leave survivable parts: e.g. a Falcon 9 second-stage COPV (helium tank) recovered in Washington State in 2021 (CHECK public reports)",
+    "Dry mass a few tonnes for medium-lift upper stages (CHECK per vehicle); component split ASSUMED"
+  ],
+  "components": [
+    {"name": "propellant tank structure", "material": "Al6061",  "shape": "cylinder", "mass_kg": 1800, "dims_m": [8.0, 3.0], "count": 1, "parent": null},
+    {"name": "engine nozzle + chamber",   "material": "Inconel", "shape": "cylinder", "mass_kg": 400,  "dims_m": [2.0, 1.0], "count": 1, "parent": null},
+    {"name": "helium COPV",               "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 30,   "dims_m": [0.7],      "count": 3, "parent": "propellant tank structure", "_note": "Ti liner + composite overwrap, modelled as Ti: ASSUMED"},
+    {"name": "turbopump",                 "material": "SS304",   "shape": "cylinder", "mass_kg": 120,  "dims_m": [0.8, 0.5], "count": 1, "parent": null},
+    {"name": "avionics + interstage ring","material": "Al6061",  "shape": "box",      "mass_kg": 150,  "dims_m": [3.0, 3.0, 0.3], "count": 1, "parent": null}
+  ]
+}

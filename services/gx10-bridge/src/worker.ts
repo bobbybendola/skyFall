@@ -129,6 +129,7 @@ async function run(job: Job): Promise<void> {
     if (job.kind === 'CLASSIFY') await runClassify(job);
     else if (job.kind === 'UPDATE') await runUpdate(job, t0);
     else if (job.kind === 'FORECAST') await runForecast(job, t0);
+    else if (job.kind === 'DEBRIS') await runDebris(job, t0);
     else throw new Error(`unknown job kind ${job.kind}`);
     log(`job ${job.id} ${job.kind} ${job.objectId} done in ${Math.round(performance.now() - t0)} ms`);
   } catch (e) {
@@ -185,6 +186,43 @@ async function runForecast(job: Job, t0: number): Promise<void> {
   });
   const ok = out.results.filter((r: any) => r.status === 'ok').length;
   log(`forecast: ${ok}/${objects.length} ok, ${(Number(out.particle_steps) / 1e9).toFixed(2)}e9 particle-steps on ${out.device}`);
+}
+
+// Debris prediction for one object: its elements, profile, archetype, forecast
+// and space weather all come from the subscription (stateless worker).
+async function runDebris(job: Job, t0: number): Promise<void> {
+  const obj = conn.db.reentryObject.id.find(job.objectId);
+  if (!obj) throw new Error(`object ${job.objectId} not in subscription`);
+  const elements = JSON.parse(obj.elements);
+  if (!isGp(elements)) throw new Error('object has no orbit elements');
+  const profile = conn.db.satelliteProfile.noradId.find(obj.noradId);
+  const archId = profile?.archetypeId || 'generic';
+  const arch = conn.db.archetype.id.find(archId) ?? conn.db.archetype.id.find('generic');
+  if (!arch) throw new Error(`archetype ${archId} not loaded (run demo-ctl seed-archetypes)`);
+  const fc = conn.db.forecast.objectId.find(obj.id);
+  const sw = conn.db.spaceWeather.key.find('current');
+  const out = await post('/debris', {
+    object: { id: obj.id, name: obj.name, elements },
+    profile: profile
+      ? {
+          norad_id: profile.noradId,
+          object_type: profile.objectType,
+          mass_kg: profile.massKg ?? null,
+          rcs_size: profile.rcsSize ?? null,
+          confidence: profile.confidence,
+        }
+      : null,
+    archetype: { id: arch.id, name: arch.name, components: JSON.parse(arch.components), confidence: arch.confidence },
+    forecast: fc?.tQ50 ? { t_q50: iso(fc.tQ50), t_q05: fc.tQ05 ? iso(fc.tQ05) : null, t_q95: fc.tQ95 ? iso(fc.tQ95) : null } : null,
+    space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null,
+  });
+  await conn.reducers.publishDebris({
+    jobId: job.id,
+    result: JSON.stringify(out),
+    jobMs: Math.round(performance.now() - t0),
+    particleSteps: BigInt(Math.round(Number(out.particle_steps) || 0)),
+    device: String(out.device ?? gpuName),
+  });
 }
 
 async function runUpdate(job: Job, t0: number): Promise<void> {
@@ -250,6 +288,9 @@ conn = DbConnection.builder()
         'SELECT * FROM sighting',
         'SELECT * FROM reporter_stats',
         'SELECT * FROM space_weather',
+        'SELECT * FROM forecast',
+        'SELECT * FROM satellite_profile',
+        'SELECT * FROM archetype',
       ]);
     c.db.computeJob.onInsert(() => void maybeClaim());
     c.db.computeJob.onUpdate(() => {

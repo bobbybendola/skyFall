@@ -10,6 +10,17 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Archetype = __t.object("Archetype", {
+  id: __t.string(),
+  name: __t.string(),
+  appliesTo: __t.string(),
+  components: __t.string(),
+  sources: __t.string(),
+  confidence: __t.string(),
+  updatedAt: __t.timestamp(),
+});
+export type Archetype = __Infer<typeof Archetype>;
+
 export const CelestrakTick = __t.object("CelestrakTick", {
   scheduledId: __t.u64(),
   scheduledAt: __t.scheduleAt(),
@@ -80,6 +91,68 @@ export const CorridorHistory = __t.object("CorridorHistory", {
   tier: __t.string(),
 });
 export type CorridorHistory = __Infer<typeof CorridorHistory>;
+
+export const DebrisComponent = __t.object("DebrisComponent", {
+  id: __t.u64(),
+  objectId: __t.string(),
+  version: __t.u32(),
+  name: __t.string(),
+  material: __t.string(),
+  shape: __t.string(),
+  count: __t.u32(),
+  massKgStart: __t.f64(),
+  pSurvive: __t.f64(),
+  massKgMean: __t.f64(),
+  impactSpeedMsMean: __t.option(__t.f64()),
+  impactEnergyJMean: __t.option(__t.f64()),
+  demiseAltKmMean: __t.option(__t.f64()),
+  impactLat: __t.option(__t.f64()),
+  impactLon: __t.option(__t.f64()),
+  footprint: __t.string(),
+});
+export type DebrisComponent = __Infer<typeof DebrisComponent>;
+
+export const DebrisForecast = __t.object("DebrisForecast", {
+  objectId: __t.string(),
+  version: __t.u32(),
+  archetypeId: __t.string(),
+  forecastVersion: __t.u32(),
+  nParticles: __t.u32(),
+  pAnySurvives: __t.f64(),
+  survivingMassKgMean: __t.f64(),
+  survivingMassKgP95: __t.f64(),
+  casualtyAreaM2Mean: __t.f64(),
+  footprint: __t.string(),
+  areaKm290: __t.f64(),
+  breakup: __t.string(),
+  tier: __t.string(),
+  device: __t.string(),
+  computedAt: __t.timestamp(),
+  note: __t.string(),
+});
+export type DebrisForecast = __Infer<typeof DebrisForecast>;
+
+export const DebrisHistory = __t.object("DebrisHistory", {
+  id: __t.u64(),
+  objectId: __t.string(),
+  version: __t.u32(),
+  pAnySurvives: __t.f64(),
+  survivingMassKgMean: __t.f64(),
+  areaKm290: __t.f64(),
+  tier: __t.string(),
+  computedAt: __t.timestamp(),
+});
+export type DebrisHistory = __Infer<typeof DebrisHistory>;
+
+export const DebrisTrack = __t.object("DebrisTrack", {
+  id: __t.u64(),
+  objectId: __t.string(),
+  version: __t.u32(),
+  component: __t.string(),
+  survived: __t.bool(),
+  points: __t.string(),
+});
+export type DebrisTrack = __Infer<typeof DebrisTrack>;
 
 export const ElementsHistory = __t.object("ElementsHistory", {
   id: __t.u64(),
@@ -197,6 +270,24 @@ export const ReporterStats = __t.object("ReporterStats", {
   lastSubmitAt: __t.timestamp(),
 });
 export type ReporterStats = __Infer<typeof ReporterStats>;
+
+export const SatelliteProfile = __t.object("SatelliteProfile", {
+  noradId: __t.u32(),
+  name: __t.string(),
+  objectType: __t.string(),
+  owner: __t.string(),
+  launchDate: __t.string(),
+  massKg: __t.option(__t.f64()),
+  dims: __t.string(),
+  shape: __t.string(),
+  rcsSize: __t.option(__t.string()),
+  archetypeId: __t.string(),
+  matchReason: __t.string(),
+  sources: __t.string(),
+  confidence: __t.string(),
+  updatedAt: __t.timestamp(),
+});
+export type SatelliteProfile = __Infer<typeof SatelliteProfile>;
 
 export const Sighting = __t.object("Sighting", {
   id: __t.u64(),

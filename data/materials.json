@@ -1,0 +1,10 @@
+{
+  "_note": "Literature-typical values for a lumped-mass re-entry heating model. CHECK against ESA DRAMA/SESAM or NASA ORSAT material tables before quoting. emissivity is a typical oxidised-surface value.",
+  "Al6061":  {"density": 2700, "melt_k": 867,  "cp": 896,  "h_fusion": 3.9e5,  "emissivity": 0.30},
+  "Ti6Al4V": {"density": 4430, "melt_k": 1943, "cp": 560,  "h_fusion": 3.6e5,  "emissivity": 0.30},
+  "SS304":   {"density": 8000, "melt_k": 1700, "cp": 500,  "h_fusion": 2.7e5,  "emissivity": 0.35},
+  "Inconel": {"density": 8190, "melt_k": 1600, "cp": 435,  "h_fusion": 3.0e5,  "emissivity": 0.40},
+  "CFRP":    {"density": 1600, "melt_k": 600,  "cp": 1100, "h_fusion": 2.0e5,  "emissivity": 0.85, "_note": "melt_k is a pyrolysis/ablation onset, h_fusion an effective value: CHECK"},
+  "Glass":   {"density": 2500, "melt_k": 1400, "cp": 800,  "h_fusion": 1.4e5,  "emissivity": 0.80},
+  "Copper":  {"density": 8960, "melt_k": 1356, "cp": 385,  "h_fusion": 2.05e5, "emissivity": 0.30}
+}

@@ -1,0 +1,10 @@
+{
+  "id": "debris-fragment",
+  "name": "Catalogued debris fragment (single piece)",
+  "applies_to": {"object_type": ["DEB"], "priority": 5},
+  "confidence": "low",
+  "sources": ["ASSUMED: one solid piece; material and mass unknown for most catalogued debris. Mass should come from radar size (RCS) when the catalog import lands"],
+  "components": [
+    {"name": "fragment", "material": "Al6061", "shape": "plate", "mass_kg": 15, "dims_m": [0.8, 0.5, 0.02], "count": 1, "parent": null}
+  ]
+}

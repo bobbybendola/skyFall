@@ -22,6 +22,8 @@ const CELESTRAK_MIN_GAP = 2n * 3600n * SEC; // CelesTrak 403s repeat downloads i
 const LEASE = 60n * SEC; // fast lane (CLASSIFY/UPDATE). Failover is faster: sweep requeues jobs of workers whose heartbeat stopped
 const LEASE_BULK = 15n * 60n * SEC; // bulk lane (FORECAST); a dead worker's job is requeued sooner by sweep
 const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
+const DEBRIS_WITHIN = 72n * 3600n * SEC; // run debris for objects forecast to re-enter this soon
+const DEBRIS_MIN_P = 0.2; // ...with at least this chance inside the forecast horizon
 const HEARTBEAT_STALE = 10n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
@@ -223,6 +225,114 @@ const forecastHistory = table(
   }
 );
 
+// What each tracked object is (from catalogs, or guessed from its name), and
+// which archetype (documented component list) the debris model uses for it.
+const satelliteProfile = table(
+  { public: true },
+  {
+    noradId: t.u32().primaryKey(),
+    name: t.string(),
+    objectType: t.string(), // PAY | R/B | DEB | UNK
+    owner: t.string(),
+    launchDate: t.string(),
+    massKg: t.f64().optional(),
+    dims: t.string(), // JSON: {length_m?, diameter_m?, span_m?}
+    shape: t.string(),
+    rcsSize: t.string().optional(), // SMALL | MEDIUM | LARGE
+    archetypeId: t.string(),
+    matchReason: t.string(),
+    sources: t.string(), // JSON list of {source, field}
+    confidence: t.string(), // low | medium | high
+    updatedAt: t.timestamp(),
+  }
+);
+
+// Documented component lists per satellite class (data/archetypes/*.json).
+const archetype = table(
+  { public: true },
+  {
+    id: t.string().primaryKey(),
+    name: t.string(),
+    appliesTo: t.string(), // JSON: {object_type?, name_regex?, mass_kg?, priority?}
+    components: t.string(), // JSON, see docs/DEBRIS_MODEL.md §2
+    sources: t.string(), // JSON list
+    confidence: t.string(),
+    updatedAt: t.timestamp(),
+  }
+);
+
+// Debris prediction per object (latest version). Components and tracks are
+// child tables keyed by object_id ("subtables" in docs/VIS_NOTES.md).
+const debrisForecast = table(
+  { public: true },
+  {
+    objectId: t.string().primaryKey(),
+    version: t.u32(),
+    archetypeId: t.string(),
+    forecastVersion: t.u32(),
+    nParticles: t.u32(),
+    pAnySurvives: t.f64(),
+    survivingMassKgMean: t.f64(),
+    survivingMassKgP95: t.f64(),
+    casualtyAreaM2Mean: t.f64(),
+    footprint: t.string(), // JSON bands [{level, polygon}]
+    areaKm2_90: t.f64(),
+    breakup: t.string(), // JSON {t_unix_s, lat, lon, alt_km}
+    tier: t.string(),
+    device: t.string(),
+    computedAt: t.timestamp(),
+    note: t.string(),
+  }
+);
+
+const debrisComponent = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    objectId: t.string().index('btree'),
+    version: t.u32(),
+    name: t.string(),
+    material: t.string(),
+    shape: t.string(),
+    count: t.u32(),
+    massKgStart: t.f64(),
+    pSurvive: t.f64(),
+    massKgMean: t.f64(),
+    impactSpeedMsMean: t.f64().optional(),
+    impactEnergyJMean: t.f64().optional(),
+    demiseAltKmMean: t.f64().optional(),
+    impactLat: t.f64().optional(),
+    impactLon: t.f64().optional(),
+    footprint: t.string(), // JSON bands
+  }
+);
+
+const debrisTrack = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    objectId: t.string().index('btree'),
+    version: t.u32(),
+    component: t.string(),
+    survived: t.bool(),
+    points: t.string(), // JSON [[t_unix_s, lat, lon, alt_km], ...]
+  }
+);
+
+const debrisHistory = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    objectId: t.string().index('btree'),
+    version: t.u32(),
+    pAnySurvives: t.f64(),
+    survivingMassKgMean: t.f64(),
+    areaKm2_90: t.f64(),
+    tier: t.string(),
+    computedAt: t.timestamp(),
+  }
+);
+
 // One row per finished compute run: what the hardware actually did.
 const computeRun = table(
   { public: true },
@@ -308,6 +418,12 @@ const spacetimedb = schema({
   replayState,
   forecast,
   forecastHistory,
+  satelliteProfile,
+  archetype,
+  debrisForecast,
+  debrisComponent,
+  debrisTrack,
+  debrisHistory,
   elementsHistory,
   computeRun,
   replaySighting,
@@ -404,6 +520,94 @@ function enqueueForecast(ctx: AnyCtx): void {
 
 const laneOf = (kind: string) => (kind === 'FORECAST' ? 'bulk' : 'fast');
 
+// One QUEUED debris job per object is enough (it reads the latest forecast).
+function enqueueDebris(ctx: AnyCtx, objectId: string): void {
+  for (const j of ctx.db.computeJob.objectId.filter(objectId)) {
+    if (j.kind === 'DEBRIS' && j.status === 'QUEUED') return;
+  }
+  ctx.db.computeJob.insert({
+    id: 0n,
+    kind: 'DEBRIS',
+    objectId,
+    sightingId: undefined,
+    status: 'QUEUED',
+    claimedBy: undefined,
+    claimedAt: undefined,
+    attempts: 0,
+    createdAt: ctx.timestamp,
+    finishedAt: undefined,
+    error: '',
+  });
+}
+
+// Object type from the name when no catalog says otherwise.
+function guessObjectType(name: string): string {
+  const n = name.toUpperCase();
+  if (/\bDEB\b/.test(n)) return 'DEB';
+  if (/\bR\/B\b/.test(n)) return 'R/B';
+  return 'PAY';
+}
+
+// Pick the archetype whose applies_to rules match best (highest priority wins).
+function matchArchetype(ctx: AnyCtx, name: string, objectType: string, massKg?: number): { id: string; reason: string } {
+  let best: { id: string; reason: string; prio: number } | null = null;
+  for (const a of ctx.db.archetype.iter()) {
+    let rule: any = {};
+    try {
+      rule = JSON.parse(a.appliesTo);
+    } catch {
+      continue;
+    }
+    const why: string[] = [];
+    if (rule.object_type) {
+      const types = Array.isArray(rule.object_type) ? rule.object_type : [rule.object_type];
+      if (!types.includes(objectType)) continue;
+      why.push(`type ${objectType}`);
+    }
+    if (rule.name_regex) {
+      let ok = false;
+      try {
+        ok = new RegExp(rule.name_regex, 'i').test(name);
+      } catch {
+        ok = false;
+      }
+      if (!ok) continue;
+      why.push(`name matches ${rule.name_regex}`);
+    }
+    if (Array.isArray(rule.mass_kg) && massKg !== undefined) {
+      if (massKg < rule.mass_kg[0] || massKg > rule.mass_kg[1]) continue;
+      why.push(`mass ${massKg} kg`);
+    }
+    const prio = Number(rule.priority ?? 0);
+    if (!best || prio > best.prio) best = { id: a.id, reason: why.join(', ') || 'default', prio };
+  }
+  return best ? { id: best.id, reason: best.reason } : { id: 'generic', reason: 'no archetype matched (fallback)' };
+}
+
+// Every object with a NORAD id gets a profile: guessed from its name until a
+// catalog import (ingest_profile) replaces it.
+function ensureProfile(ctx: AnyCtx, noradId: number, name: string): void {
+  if (!noradId || ctx.db.satelliteProfile.noradId.find(noradId)) return;
+  const objectType = guessObjectType(name);
+  const m = matchArchetype(ctx, name, objectType);
+  ctx.db.satelliteProfile.insert({
+    noradId,
+    name,
+    objectType,
+    owner: '',
+    launchDate: '',
+    massKg: undefined,
+    dims: '{}',
+    shape: '',
+    rcsSize: undefined,
+    archetypeId: m.id,
+    matchReason: `${m.reason}; type guessed from name`,
+    sources: JSON.stringify([{ source: 'object name', field: 'OBJECT_NAME' }]),
+    confidence: 'low',
+    updatedAt: ctx.timestamp,
+  });
+}
+
 function claimedJob(ctx: AnyCtx, jobId: bigint, kind: string) {
   const job = ctx.db.computeJob.id.find(jobId);
   if (!job) throw new SenderError('no such job');
@@ -498,6 +702,7 @@ function upsertObject(ctx: AnyCtx, row: any): boolean {
   }
   if (existed) ctx.db.reentryObject.id.update(row);
   else ctx.db.reentryObject.insert(row);
+  ensureProfile(ctx, Number(row.noradId ?? 0), String(row.name ?? ''));
   return !existed;
 }
 
@@ -808,7 +1013,7 @@ export const claimJob = spacetimedb.reducer({}, ctx => {
   for (const j of ctx.db.computeJob.iter()) {
     if (j.claimedBy && j.claimedBy.isEqual(ctx.sender) && j.status === 'CLAIMED') busy.add(laneOf(j.kind));
   }
-  const rank = (k: string) => (k === 'CLASSIFY' ? 0 : k === 'UPDATE' ? 1 : 2);
+  const rank = (k: string) => (k === 'CLASSIFY' ? 0 : k === 'UPDATE' ? 1 : k === 'DEBRIS' ? 2 : 3);
   let next: any = null;
   for (const j of ctx.db.computeJob.iter()) {
     if (j.status !== 'QUEUED' || busy.has(laneOf(j.kind))) continue;
@@ -965,6 +1170,15 @@ export const publishForecast = spacetimedb.reducer(
       };
       if (prev) ctx.db.forecast.objectId.update(row);
       else ctx.db.forecast.insert(row);
+      // Chain: objects likely to come down soon get a debris prediction.
+      if (
+        row.status === 'ok' &&
+        row.decayedFrac >= DEBRIS_MIN_P &&
+        row.tQ50 !== undefined &&
+        micros(row.tQ50) - micros(ctx.timestamp) < DEBRIS_WITHIN
+      ) {
+        enqueueDebris(ctx, obj.id);
+      }
       ctx.db.forecastHistory.insert({
         id: 0n,
         objectId: obj.id,
@@ -1020,6 +1234,179 @@ export const archiveCurrentElements = spacetimedb.reducer({}, ctx => {
     if (!epoch) continue;
     const have = [...ctx.db.elementsHistory.objectId.filter(o.id)].some((h: any) => h.epoch === epoch);
     if (!have) ctx.db.elementsHistory.insert({ id: 0n, objectId: o.id, epoch, elements: o.elements, fetchedAt: o.updatedAt });
+  }
+});
+
+// result: JSON from gx10-compute /debris (docs/DEBRIS_MODEL.md §5).
+export const publishDebris = spacetimedb.reducer(
+  { jobId: t.u64(), result: t.string(), jobMs: t.u32(), particleSteps: t.u64(), device: t.string() },
+  (ctx, a) => {
+    requireRole(ctx, 'worker');
+    const job = claimedJob(ctx, a.jobId, 'DEBRIS');
+    finishJob(ctx, job);
+    let r: any;
+    try {
+      r = JSON.parse(a.result);
+    } catch {
+      throw new SenderError('result must be JSON');
+    }
+    const me = ctx.db.computeStatus.worker.find(ctx.sender);
+    const tier = me?.tier ?? 'unknown';
+    const objectId = job.objectId;
+    const prev = ctx.db.debrisForecast.objectId.find(objectId);
+    const version = prev ? prev.version + 1 : 1;
+    const fc = ctx.db.forecast.objectId.find(objectId);
+    const num = (x: any, d = 0) => (Number.isFinite(Number(x)) ? Number(x) : d);
+    const opt = (x: any) => (x === null || x === undefined || !Number.isFinite(Number(x)) ? undefined : Number(x));
+    const row = {
+      objectId,
+      version,
+      archetypeId: String(r.archetype ?? ''),
+      forecastVersion: fc?.version ?? 0,
+      nParticles: num(r.n_particles),
+      pAnySurvives: num(r.p_any_survives),
+      survivingMassKgMean: num(r.surviving_mass_kg?.mean),
+      survivingMassKgP95: num(r.surviving_mass_kg?.p95),
+      casualtyAreaM2Mean: num(r.casualty_area_m2?.mean),
+      footprint: JSON.stringify(r.footprint?.bands ?? []),
+      areaKm2_90: num(r.footprint?.area_km2_90),
+      breakup: JSON.stringify(r.breakup ?? {}),
+      tier,
+      device: a.device,
+      computedAt: ctx.timestamp,
+      note: String(r.note ?? '').slice(0, 200),
+    };
+    if (prev) ctx.db.debrisForecast.objectId.update(row);
+    else ctx.db.debrisForecast.insert(row);
+    // Replace the child rows for this object.
+    for (const c of [...ctx.db.debrisComponent.objectId.filter(objectId)]) ctx.db.debrisComponent.id.delete(c.id);
+    for (const tr of [...ctx.db.debrisTrack.objectId.filter(objectId)]) ctx.db.debrisTrack.id.delete(tr.id);
+    for (const c of r.components ?? []) {
+      ctx.db.debrisComponent.insert({
+        id: 0n,
+        objectId,
+        version,
+        name: String(c.name ?? ''),
+        material: String(c.material ?? ''),
+        shape: String(c.shape ?? ''),
+        count: num(c.count, 1),
+        massKgStart: num(c.mass_kg?.start),
+        pSurvive: num(c.p_survive),
+        massKgMean: num(c.mass_kg?.mean),
+        impactSpeedMsMean: opt(c.impact_speed_ms?.mean),
+        impactEnergyJMean: opt(c.impact_energy_j?.mean),
+        demiseAltKmMean: opt(c.demise_alt_km?.mean),
+        impactLat: opt(c.impact?.lat),
+        impactLon: opt(c.impact?.lon),
+        footprint: JSON.stringify(c.footprint?.bands ?? []),
+      });
+    }
+    for (const tr of (r.sample_tracks ?? []).slice(0, 80)) {
+      ctx.db.debrisTrack.insert({
+        id: 0n,
+        objectId,
+        version,
+        component: String(tr.component ?? ''),
+        survived: !!tr.survived,
+        points: JSON.stringify((tr.points ?? []).slice(0, 60)),
+      });
+    }
+    ctx.db.debrisHistory.insert({
+      id: 0n,
+      objectId,
+      version,
+      pAnySurvives: row.pAnySurvives,
+      survivingMassKgMean: row.survivingMassKgMean,
+      areaKm2_90: row.areaKm2_90,
+      tier,
+      computedAt: ctx.timestamp,
+    });
+    ctx.db.computeRun.insert({
+      id: 0n,
+      kind: 'DEBRIS',
+      tier,
+      device: a.device,
+      objects: 1,
+      particles: BigInt(row.nParticles),
+      particleSteps: a.particleSteps,
+      ms: a.jobMs,
+      finishedAt: ctx.timestamp,
+    });
+  }
+);
+
+export const requestDebris = spacetimedb.reducer({ objectId: t.string() }, (ctx, { objectId }) => {
+  requireRole(ctx, 'operator');
+  if (!ctx.db.reentryObject.id.find(objectId)) throw new SenderError('unknown object');
+  enqueueDebris(ctx, objectId);
+});
+
+// Store a documented archetype (data/archetypes/<id>.json).
+export const upsertArchetype = spacetimedb.reducer({ id: t.string(), json: t.string() }, (ctx, { id, json }) => {
+  requireRole(ctx, 'operator');
+  let a: any;
+  try {
+    a = JSON.parse(json);
+  } catch {
+    throw new SenderError('archetype must be JSON');
+  }
+  if (!Array.isArray(a.components) || a.components.length === 0) throw new SenderError('components required');
+  for (const c of a.components) {
+    if (!c.name || !c.material || !c.shape || !(Number(c.mass_kg) > 0) || !Array.isArray(c.dims_m)) {
+      throw new SenderError(`component ${c.name ?? '?'} needs name, material, shape, mass_kg, dims_m`);
+    }
+  }
+  const row = {
+    id,
+    name: String(a.name ?? id),
+    appliesTo: JSON.stringify(a.applies_to ?? {}),
+    components: JSON.stringify(a.components),
+    sources: JSON.stringify(a.sources ?? []),
+    confidence: String(a.confidence ?? 'low'),
+    updatedAt: ctx.timestamp,
+  };
+  if (ctx.db.archetype.id.find(id)) ctx.db.archetype.id.update(row);
+  else ctx.db.archetype.insert(row);
+});
+
+// Catalog data for one object (GCAT / SATCAT / DISCOSweb via the poller).
+export const ingestProfile = spacetimedb.reducer(
+  {
+    noradId: t.u32(),
+    name: t.string(),
+    objectType: t.string(),
+    owner: t.string(),
+    launchDate: t.string(),
+    massKg: t.f64().optional(),
+    dims: t.string(),
+    shape: t.string(),
+    rcsSize: t.string().optional(),
+    sources: t.string(),
+    confidence: t.string(),
+  },
+  (ctx, a) => {
+    requireRole(ctx, 'poller', 'operator');
+    const m = matchArchetype(ctx, a.name, a.objectType, a.massKg);
+    const row = { ...a, massKg: a.massKg, rcsSize: a.rcsSize, archetypeId: m.id, matchReason: m.reason, updatedAt: ctx.timestamp };
+    if (ctx.db.satelliteProfile.noradId.find(a.noradId)) ctx.db.satelliteProfile.noradId.update(row);
+    else ctx.db.satelliteProfile.insert(row);
+  }
+);
+
+// After loading or changing archetypes: re-match every profile and make sure
+// every object has one.
+export const rematchProfiles = spacetimedb.reducer({}, ctx => {
+  requireRole(ctx, 'operator');
+  for (const o of ctx.db.reentryObject.iter()) ensureProfile(ctx, o.noradId, o.name);
+  for (const p of [...ctx.db.satelliteProfile.iter()]) {
+    const m = matchArchetype(ctx, p.name, p.objectType, p.massKg);
+    const guessed = p.confidence === 'low' && p.matchReason.includes('guessed');
+    ctx.db.satelliteProfile.noradId.update({
+      ...p,
+      archetypeId: m.id,
+      matchReason: guessed ? `${m.reason}; type guessed from name` : m.reason,
+      updatedAt: ctx.timestamp,
+    });
   }
 });
 

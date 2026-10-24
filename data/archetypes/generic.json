@@ -1,0 +1,15 @@
+{
+  "id": "generic",
+  "name": "Generic small LEO satellite (fallback)",
+  "applies_to": {"priority": 0},
+  "confidence": "low",
+  "sources": ["ASSUMED: typical 100-300 kg smallsat layout; used only when nothing better matches"],
+  "components": [
+    {"name": "bus structure",   "material": "Al6061",  "shape": "box",      "mass_kg": 60,  "dims_m": [1.0, 0.8, 0.8], "count": 1, "parent": null},
+    {"name": "solar array",     "material": "CFRP",    "shape": "plate",    "mass_kg": 20,  "dims_m": [3.0, 1.0, 0.03], "count": 2, "parent": null},
+    {"name": "reaction wheel",  "material": "SS304",   "shape": "cylinder", "mass_kg": 2.5, "dims_m": [0.08, 0.20], "count": 4, "parent": "bus structure"},
+    {"name": "propellant tank", "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 5,   "dims_m": [0.40], "count": 1, "parent": "bus structure"},
+    {"name": "battery pack",    "material": "Copper",  "shape": "box",      "mass_kg": 8,   "dims_m": [0.30, 0.20, 0.15], "count": 1, "parent": "bus structure"},
+    {"name": "avionics box",    "material": "Al6061",  "shape": "box",      "mass_kg": 4,   "dims_m": [0.30, 0.25, 0.10], "count": 3, "parent": "bus structure"}
+  ]
+}
