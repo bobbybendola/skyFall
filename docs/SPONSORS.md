@@ -1,10 +1,12 @@
 # Sponsor tracks
 
-Source: https://hive.hackberkeley.org/prizes (read Oct 23, 9:55 PM). Re-check before submitting; "coming soon" listings may change. Stack at most four tracks.
+Source: https://hive.hackberkeley.org/prizes (page version "Updated Oct 23, 9:55 PM"; re-read Oct 24, 58 prize cards). Re-check before submitting; "coming soon" listings may change. Stack at most four sponsor tracks (from our earlier notes; this rule is not on the prizes page, so confirm on Devpost).
+
+General Cal Hacks prizes we are judged for anyway: Most Technically Complex Hack, Best Planet-First Hack, overall placings.
 
 ## Planned
-### SpacetimeDB (core)
-Wants Spacetime as the core real-time backend: live shared state, instant sync between users/agents/systems, meaningful use.
+### SpacetimeDB (core): 1st $2,048, 2nd $1,024, 3rd $512
+Wants Spacetime as the core real-time backend: live shared state, instant sync between users/agents/systems, meaningful use. Their list of good fits names "shared simulations", "live dashboards" and "AI systems coordinating in a persistent world state", and says Spacetime must be "meaningfully used, not just added on the side". (A separate Scrabblebot Tournament prize exists; not ours.)
 README section: which tables are shared state, what each reducer enforces, what updates live on every screen, how the GX10 worker coordinates through reducers.
 Our pitch: SpacetimeDB is the backend, not a sync layer. It runs the GPU job queue with leases and CPU failover, reporter trust, the replay clock and corridor history, and it fetches NOAA/CelesTrak itself through scheduled procedures. Demo beat: unplug the GX10 and the database hands its work to the CPU worker.
 
@@ -16,6 +18,12 @@ Check: exact Grok API capabilities and credits.
 ### Anthropic (details "coming soon")
 Criteria shown: a named community, a real problem, it works, thoughtful use of Claude (and where it could go wrong).
 Our plan: name a community (flight dispatchers or amateur sky-watchers; decide in hour one); give Claude one job, such as a plain-language advisory and the reason a sighting was held. State failure modes in the README.
+
+### Candidate: Mana.space, $5,000 cash (decide in the morning)
+Use Mana meaningfully while building; link public Mana pages/chats in the submission; show one demo moment where Mana changed what or how fast we built. Scoring: meaningful use 30, usefulness 25, originality 25, execution 20, bonus up to +10 if the project lives inside Mana as an app or agent a judge can open. Tool-use prize, compatible with our build if a teammate does real work in Mana (e.g. the operator panel or phone page prototype). Ask the Mana table whether Mana use alongside Cursor counts.
+
+### Watch: Annapurna Labs (coming soon)
+AWS's chip team. No criteria yet; check the booth. Relevant to the GX10/hardware angle.
 
 ## Optional, only if genuinely central
 - **Bright Data / Apify:** both require real essential web data and Bright Data disqualifies mocked demo data. Default: skip.
