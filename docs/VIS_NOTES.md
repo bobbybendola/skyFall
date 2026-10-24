@@ -1,5 +1,7 @@
 # Visualization notes (for whoever builds the globe)
 
+**Task split for 4 people: `docs/GLOBE_TASKS.md`.**
+
 Ideas from the team (Oct 24) for the visualization side, with how each maps onto what's already planned. Contract: `docs/ARCHITECTURE.md`. Physics: `docs/DEBRIS_MODEL.md`. Scope and priorities: `docs/PIVOT.md`, `docs/DEV_PLAN.md`.
 
 ## 1. 3D Earth instead of the flat world map

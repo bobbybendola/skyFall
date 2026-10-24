@@ -1,3 +1,5 @@
+> **Update Oct 24:** Space-Track explored with a live account. Limits, fields, catalog size and the TIP comparison are in `docs/SPACETRACK_NOTES.md`.
+
 # Live data sources
 
 Research notes for `services/feed-poller`. Checked 2026-10-24. "Verified" means one of two things: the field names came from a single unauthenticated fetch of the public endpoint that day, or the text came from the provider's own docs page. Anything marked **(check)** was not verified. Confirm it before relying on it (AGENTS.md rule).
