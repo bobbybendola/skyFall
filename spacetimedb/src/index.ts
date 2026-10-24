@@ -481,7 +481,9 @@ function pollNoaa(ctx: any): void {
     if (!r.ok) throw new Error(`kp HTTP ${r.status}`);
     const rows = r.json() as Array<{ time_tag: string; Kp: number }>;
     const last = rows[rows.length - 1];
-    kp = Number(last.Kp);
+    const v = Number(last?.Kp);
+    if (!Number.isFinite(v) || typeof last?.time_tag !== 'string') throw new Error('kp: unexpected format');
+    kp = v;
     kpTime = last.time_tag;
   } catch (e) {
     err += String(e) + '; ';
@@ -489,8 +491,12 @@ function pollNoaa(ctx: any): void {
   try {
     const r = get('https://services.swpc.noaa.gov/products/summary/10cm-flux.json');
     if (!r.ok) throw new Error(`f107 HTTP ${r.status}`);
-    const d = r.json() as { flux: number | string; time_tag: string };
-    f107 = Number(d.flux);
+    // Served as a one-element array (seen Oct 24); accept a bare object too.
+    const body = r.json() as any;
+    const d = (Array.isArray(body) ? body[body.length - 1] : body) as { flux?: number | string; time_tag?: string };
+    const v = Number(d?.flux);
+    if (!Number.isFinite(v) || typeof d?.time_tag !== 'string') throw new Error('f107: unexpected format');
+    f107 = v;
     f107Time = d.time_tag;
   } catch (e) {
     err += String(e);
