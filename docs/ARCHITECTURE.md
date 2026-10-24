@@ -8,7 +8,9 @@ SpacetimeDB is not a cache or a message pipe here. The module in `spacetimedb/` 
 | Who may write what | `worker_registry` + role checks in every reducer; workers approved by the operator |
 | Sighting intake and validation | `submit_sighting` (range, mode, rate limit per identity) |
 | Reporter trust | `reporter_stats`, updated by verdicts and by the simulation's per-sighting consistency scores |
-| GPU work queue, leases, retries | `compute_job` + `claim_job` / `set_verdict` / `publish_corridor` / `fail_job` + the `sweep` scheduled reducer |
+| GPU work queue, leases, retries | `compute_job` + `claim_job` / `set_verdict` / `publish_corridor` / `publish_forecast` / `fail_job` + the `sweep` scheduled reducer. Two lanes per worker: one bulk FORECAST and one fast CLASSIFY/UPDATE at a time |
+| Re-entry forecasts for every object | FORECAST jobs (queued every 20 min, on new CelesTrak elements, and when Kp/F10.7 move) → `forecast`, `forecast_history`, `compute_run` |
+| Archive for real replays | `elements_history` (every distinct element set fetched) + `forecast_history` |
 | GPU-to-CPU failover | `claim_job` refuses CPU workers while a healthy GPU worker exists; `sweep` marks silent workers unhealthy |
 | Corridor and its history | `corridor` (current) + `corridor_history` (every version, for the timeline and before/after) |
 | The demo replay | `replay_state` + private `replay_sighting` script + the `replay_step` scheduled reducer that emits simulated sightings |
@@ -64,10 +66,14 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `reentry_object` | `id` (`TIP-<norad>`, `CT-<norad>`, `REPLAY-<name>`) | `name`, `norad_id`, `source` (`TIP` \| `REPLAY` \| `CANDIDATE`), `window_start?`, `window_end?` (absent for `CANDIDATE`), `elements` (JSON), `status` (`PREDICTED` \| `DECAYED` \| `REPLAY` \| `CANDIDATE`), `updated_at` |
 | `sighting` | `id` (auto) | `object_id`, `lat`, `lon`, `observed_at`, `bearing_deg?`, `clip_ref?`, `reporter` (identity), `reporter_key` (identity hex, or `sim-<n>`), `mode` (`LIVE` \| `DEMO` \| `SIM`), `verdict` (`PENDING` \| `ACCEPTED` \| `HELD` \| `REJECTED`), `reason`, `p_inlier?` |
 | `reporter_stats` | `reporter_key` | `submitted`, `accepted`, `rejected`, `agreed`, `disagreed`, `last_submit_at` |
-| `compute_job` | `id` (auto) | `kind` (`CLASSIFY` \| `UPDATE` \| `ASK` (planned)), `object_id` (`""` for ASK), `sighting_id?`, `message_id?` (planned, ASK only), `status` (`QUEUED` \| `CLAIMED` \| `DONE` \| `FAILED`), `claimed_by?`, `claimed_at?`, `attempts`, `created_at`, `finished_at?`, `error` |
+| `compute_job` | `id` (auto) | `kind` (`CLASSIFY` \| `UPDATE` \| `FORECAST` \| `ASK` (planned)), `object_id` (`*` for FORECAST, `""` for ASK), `sighting_id?`, `message_id?` (planned, ASK only), `status` (`QUEUED` \| `CLAIMED` \| `DONE` \| `FAILED`), `claimed_by?`, `claimed_at?`, `attempts`, `created_at`, `finished_at?`, `error` |
 | `corridor` | `object_id` | `version`, `bands` (JSON `[{level, polygon}]`), `area_km2_90`, `n_samples`, `n_sightings_used`, `computed_at`, `computed_by` |
 | `corridor_history` | `id` (auto) | `object_id`, `version`, `bands`, `area_km2_90`, `n_sightings_used`, `computed_at`, `job_ms`, `tier` |
 | `compute_status` | `worker` (identity) | `tier` (`gpu` \| `cpu`), `gpu_name`, `healthy`, `variants_run_total` (summed by the module from finished jobs), `last_job_ms`, `sightings_classified`, `updated_at` (heartbeat) |
+| `forecast` | `object_id` | `version`, `status` (`ok` \| `likely_reentered` \| `error`), `t_q05?`, `t_q25?`, `t_q50?`, `t_q75?`, `t_q95?` (re-entry time quantiles), `decayed_frac` (share re-entering inside the horizon), `horizon_days`, `n_samples`, `ess`, `calibrated`, `bc_m2_kg`, `area_km2_90`, `tier`, `device`, `computed_at`, `note` |
+| `forecast_history` | `id` (auto) | `object_id`, `version`, `t_q05?`, `t_q50?`, `t_q95?`, `decayed_frac`, `n_samples`, `tier`, `computed_at` |
+| `elements_history` | `id` (auto) | `object_id`, `epoch`, `elements` (JSON), `fetched_at`. Appended whenever an object's element epoch changes |
+| `compute_run` | `id` (auto) | `kind`, `tier`, `device`, `objects`, `particles`, `particle_steps`, `ms`, `finished_at` |
 | `feed_status` | `feed` | `last_attempt_at?`, `last_ok_at?`, `last_error`, `rows_ingested` |
 | `space_weather` | `key` (`current`) | `kp?`, `kp_time`, `f107?`, `f107_time`, `updated_at` |
 | `replay_state` | `id` = 0 | `running`, `t_offset` (s), `event_id`, `started_at`, `speed`. Replay clock = `t_offset + (now - started_at) * speed` |
@@ -87,12 +93,15 @@ Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `spacet
 | `ingest_object(...)` | reducer | poller, operator | upsert `reentry_object`; a new tracked object gets a baseline `UPDATE` job |
 | `report_feed_status(feed, ok, error, rows)` | reducer | poller, operator | upsert `feed_status` |
 | `submit_sighting(...)` | reducer | anyone | validate, rate-limit (one per 2 s per identity), insert. With a clip: `PENDING` + `CLASSIFY` job. Without: `ACCEPTED` ("position-only report") + `UPDATE` job |
-| `claim_job()` | reducer | worker | give the caller the next `QUEUED` job (CLASSIFY first, then oldest), one at a time; CPU tier gets nothing while a healthy GPU worker exists |
+| `claim_job()` | reducer | worker | give the caller the next `QUEUED` job in a free lane (CLASSIFY, then UPDATE, then FORECAST; oldest first). Lanes: bulk (FORECAST) and fast (the rest), one job each. Unhealthy callers get nothing; CPU tier gets nothing while a healthy GPU worker exists |
+| `publish_forecast(job_id, results, job_ms, particle_steps, n_per_object, device)` | reducer | worker holding the FORECAST | upsert `forecast` + append `forecast_history` per object; new corridor version for objects that re-enter inside the horizon and have no sightings yet; log `compute_run` |
+| `request_forecast()` | reducer | operator | queue a FORECAST now |
+| `archive_current_elements()` | reducer | operator | one-off backfill of `elements_history` |
 | `set_verdict(job_id, verdict, reason)` | reducer | worker holding the job | finish CLASSIFY, set the sighting's verdict, update trust, queue `UPDATE` unless rejected |
 | `publish_corridor(job_id, bands, area_km2_90, n_samples, n_sightings_used, job_ms, scores)` | reducer | worker holding the job | finish UPDATE, replace `corridor`, append `corridor_history`, add to `variants_run_total`, apply `scores` (`p_inlier` < 0.2 moves ACCEPTED → HELD; ≥ 0.5 restores) and update `agreed`/`disagreed` |
 | `fail_job(job_id, error)` | reducer | worker holding the job | re-queue, or `FAILED` after 3 attempts |
 | `report_compute_status(tier, gpu_name, healthy)` | reducer | worker | heartbeat |
-| `sweep` | scheduled reducer, 2 s | module | expire job leases older than 10 s; mark workers silent for 10 s unhealthy |
+| `sweep` | scheduled reducer, 2 s | module | requeue jobs whose worker is unhealthy or silent; expire leases (fast 60 s, bulk 15 min); mark workers silent for 10 s unhealthy; drop workers silent for 10 min; queue a FORECAST if none ran for 20 min |
 | `load_replay_script(event_id, rows)` | reducer | operator | load the simulated sightings from `tools/sighting-gen` |
 | `start_replay(event_id, t_offset, speed)`, `pause_replay()` | reducer | operator | drive the replay clock |
 | `replay_step` | scheduled reducer, 1 s | module | emit due `replay_sighting` rows as `SIM` sightings |
@@ -119,9 +128,10 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 Target: tap to visible change in about 2 seconds. New sightings arriving while an UPDATE runs coalesce into the next one.
 
 ## gx10-compute API
+- `POST /forecast` → body `{objects: [{id, elements (GP/OMM JSON)}], space_weather?: {kp, f107}, as_of?}` → `{results: [{id, status, t_quantiles: {"5","25","50","75","95"}, decayed_frac, bands, area_km2_90, n_samples, ess, calibrated, bc_m2_kg}], ms, device, n_per_object, horizon_days, particle_steps}`. The physics is in `services/gx10-compute/sim.py`; see `docs/SIM_SPEC.md`
 - `GET /health` → GPU name, free memory, model status, `use_gpu`
 - `POST /classify` → body `{image_b64 | clip_ref}` → `{label, confidence, reason}`; labels: `reentry`, `meteor`, `aircraft_or_train`, `nothing`
-- `POST /update` → body `{object: {elements, window_start, window_end}, sightings: [{id, lat, lon, observed_at, bearing_deg?, trust}], space_weather?: {kp, f107}}` → `{bands: [{level, polygon}], area_km2_90, n_samples, ess, ms, scores: [{id, p_inlier}]}`
+- `POST /update` → body `{object: {id, elements, window_start?, window_end?}, sightings: [{id, lat, lon, observed_at, bearing_deg?, trust}], space_weather?: {kp, f107}}` → `{bands: [{level, polygon}], area_km2_90, n_samples, ess, ms, scores: [{id, p_inlier}]}`
 Polygons are GeoJSON-style `[lon, lat]` rings, simplified to at most a few hundred points before leaving compute. `trust` = `(agreed + accepted + 1) / (agreed + disagreed + accepted + rejected + 2)` from `reporter_stats`; compute lowers a sighting's outlier rate as trust rises (see SIM_SPEC.md).
 
 ## Sky assistant (planned, Phase 3)
