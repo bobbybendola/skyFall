@@ -12,8 +12,8 @@ Our pitch: SpacetimeDB is the backend, not a sync layer. It runs the GPU job que
 
 ### SpaceXAI "Make it Legendary" (+ MLH "Build Your Hackathon A-Team")
 Requirements as listed: project built with **Cursor**; must use the **Grok Imagine or Voice API**; bonus for Grok Bot for planning/collaboration. Space/public data theme. MLH A-Team: use Cursor as the core coding agent, integrate Grok Bot in the workflow, describe how in the project description, opt in to the "Make it Legendary" raffle at submission.
-Our use: real space data (Space-Track, CelesTrak, NOAA); Grok Imagine for the synthetic test set; Grok Voice for sighting reports/spoken updates if time; Grok Bot for planning. Keep `docs/TOOL_LOG.md`.
-Check: exact Grok API capabilities and credits.
+Our use: real space data (Space-Track, CelesTrak, NOAA); an in-app **sky assistant** on the Grok API that answers questions from our tables and tells users where and when to look (see ARCHITECTURE.md); Grok Voice for the assistant if time; Grok Imagine for the synthetic test set; Grok Bot for team planning (the assistant is separate from Grok Bot and does not count for the Grok Bot bonus). Keep `docs/TOOL_LOG.md`.
+Check: exact Grok API capabilities (function calling, Voice) and credits.
 
 ### Anthropic (details "coming soon")
 Criteria shown: a named community, a real problem, it works, thoughtful use of Claude (and where it could go wrong).

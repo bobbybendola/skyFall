@@ -7,7 +7,7 @@ Rule: do not start a phase's polish until the previous checkpoint passes.
 - **A** SpacetimeDB module (the backend: queue, trust, replay, feeds), feed-poller
 - **B** gx10-compute (sim + vision), GX10 setup (start immediately), worker
 - **C** web (map, phone page, animation, panels)
-- **D** (optional) sighting-gen, imagine-gen, demo script, sponsor conversations
+- **D** (optional) sighting-gen, imagine-gen, sky assistant worker, demo script, sponsor conversations
 With two people: A+C and B+D.
 
 Design rule (see ARCHITECTURE.md): if a rule can live in a reducer, it lives in a reducer. Workers and screens stay thin.
@@ -43,9 +43,16 @@ Follow `docs/SETUP.md` sections A and D.
 - [ ] `feed-poller`: Space-Track TIP/decay/GP → `ingest_object`, `report_feed_status` (within the request budget in LIVE_DATA_SOURCES.md)
 - [ ] `tools/imagine-gen`: ~100 synthetic labeled images (4 classes); keep a held-out test split
 - [ ] `/classify` with CLIP-style zero-shot; rejected pins show why
-- [ ] Optional: Grok Voice sighting reports (check docs first)
+- [ ] Sky assistant, text (ARCHITECTURE.md "Sky assistant"), about 3 to 5 hours:
+  - [ ] Module: `assistant_message`, `ASK` job kind + `message_id`, `assistant` role, `ask_assistant`, `post_answer`, `my_assistant_messages`; `claim_job` routes ASK only to assistant identities
+  - [ ] `data/meteor_showers.json` (next ~3 months from the IMO calendar, with source)
+  - [ ] `services/assistant`: subscribe, claim ASK, Grok chat with the 7 lookups, output checks, `post_answer` / `fail_job`
+  - [ ] `get_visibility` with satellite.js; test it against one known ISS pass from a public pass predictor
+  - [ ] `web/`: chat panel on `/` and `/report`, "share my location" toggle, data-mode badge on each answer
+  - [ ] 10 test questions in `docs/ASSISTANT_TESTS.md` (when to look, why was this held, will it land on me, off-topic) with pass/fail notes
+- [ ] Optional, after the text assistant works: Grok Voice for the assistant and for sighting reports (check the API first)
 
-**Checkpoint:** live panels show real data with timestamps from `feed_status`; a plane image is rejected with a visible reason.
+**Checkpoint:** live panels show real data with timestamps from `feed_status`; a plane image is rejected with a visible reason; asking "when can I see it from here?" returns a pass time from `get_visibility` labeled live or simulated, and "will it land on my house?" gets the window and band, not a yes/no.
 
 ## Phase 4: Polish and robustness (h22 to h28)
 - [ ] Corridor animation; timeline scrubber and before/after area from `corridor_history`
@@ -62,7 +69,8 @@ Follow `docs/SETUP.md` sections A and D.
 - [ ] Rehearse the 2-minute script twice
 
 ## Cut order if time runs short
-1. Globe view  2. Grok Voice  3. Vision classifier  4. Flight-impact overlay  5. Extra panels.
+1. Globe view  2. Grok Voice  3. Vision classifier  4. Flight-impact overlay  5. Extra panels  6. Assistant visibility lookup (keep the chat answering from tables).
+Keep at least the text assistant if entering SpaceXAI, unless Grok Imagine (imagine-gen) already covers the Grok API requirement.
 Never cut: pins live on the big screen, the shrinking corridor, the GX10 status panel.
 
 ## Decisions to make in the first hour (write the answer here)
