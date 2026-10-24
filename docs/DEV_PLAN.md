@@ -14,7 +14,7 @@ Rule: don't start polish before the block's checkpoint passes. Every task is a b
 ## Block 1, 14:00–18:00: contracts and skeletons in parallel
 - [ ] **Schema (R3):** `satellite_profile`, `archetype`, `debris_forecast`, `debris_component`, `debris_track`, `debris_history`; `DEBRIS` job kind; `ingest_profile`, `upsert_archetype`, `publish_debris`, `request_debris`; `publish_forecast` queues DEBRIS. Publish, regenerate bindings, merge **first**, since everyone builds on it
 - [ ] **Archetypes (R3):** 6 JSON files in `data/archetypes/` + `data/materials.json`, every number sourced; `demo-ctl seed-archetypes`
-- [ ] **Physics v0 (R2):**
+- [x] **Physics v0 (R2):** (also covers most of v1: all four shapes, parent–child, footprints, sample tracks, batched)
   - `sim.py` keeps the state at 80 km per particle
   - `/debris` with lumped heating for spheres and cylinders
   - unit checks (an aluminium sphere demises, a titanium tank survives)

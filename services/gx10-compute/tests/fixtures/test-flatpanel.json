@@ -1,0 +1,13 @@
+{
+  "id": "test-flatpanel",
+  "name": "TEST FIXTURE ONLY: flat-panel LEO satellite (numbers from the docs/DEBRIS_MODEL.md example, not sourced)",
+  "applies_to": {"object_type": "PAY"},
+  "sources": ["docs/DEBRIS_MODEL.md section 2 example (assumed, for tests only; real archetypes live in data/archetypes/)"],
+  "confidence": "low",
+  "components": [
+    {"name": "bus structure",   "material": "Al6061",  "shape": "box",      "mass_kg": 120, "dims_m": [2.8, 1.4, 0.2], "count": 1},
+    {"name": "solar array",     "material": "CFRP",    "shape": "plate",    "mass_kg": 40,  "dims_m": [8.0, 2.8, 0.03], "count": 1},
+    {"name": "reaction wheel",  "material": "SS304",   "shape": "cylinder", "mass_kg": 3.0, "dims_m": [0.10, 0.25], "count": 4, "parent": "bus structure"},
+    {"name": "propellant tank", "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 4.0, "dims_m": [0.30], "count": 1, "parent": "bus structure"}
+  ]
+}

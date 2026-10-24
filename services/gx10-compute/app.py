@@ -1,13 +1,15 @@
 """gx10-compute: plain HTTP in, JSON out. Never talks to SpacetimeDB.
 
 /forecast  batched Monte Carlo decay forecast for many objects (sim.py), the GX10's main job
+/debris    break-up and survivability Monte Carlo for one object (debris.py); MODELED ESTIMATE
 /update    sighting fusion for one object (sim.py). Objects whose elements are the
            old "circular-ground-track-stub" model still use the Phase 1 stub below.
 /classify  stub that accepts everything (Phase 3).
 
 USE_GPU=1 runs on CUDA with SIM_N particles per object (default 20000) and a
 HORIZON_DAYS horizon (default 10). On CPU the defaults drop to 300 particles and
-3 days: that is the degraded mode the UI labels.
+3 days: that is the degraded mode the UI labels. /debris uses DEBRIS_N particles
+(default 2000 on CUDA; 100 on CPU, degraded: main structure + 2 heaviest parts).
 """
 
 from __future__ import annotations
@@ -81,6 +83,24 @@ class UpdateIn(BaseModel):
     as_of: str | None = None
 
 
+class DebrisObject(BaseModel):
+    id: str
+    elements: dict | None = None  # GP / OMM JSON; not needed when `entry` is given
+
+
+class DebrisIn(BaseModel):
+    object: DebrisObject
+    archetype: dict  # docs/DEBRIS_MODEL.md section 2
+    profile: dict | None = None  # satellite_profile row (mass_kg, dims_m, ...)
+    materials: dict | list | None = None  # overrides data/materials.json and the built-in table
+    space_weather: dict | None = None
+    n_particles: int | None = None
+    entry: dict | None = None  # nominal 80 km state instead of the forecast (tests, past cases)
+    as_of: str | None = None
+    degraded: bool | None = None  # default: degraded when not on CUDA
+    seed: int | None = None
+
+
 class ClassifyIn(BaseModel):
     image_b64: str | None = None
     clip_ref: str | None = None
@@ -152,7 +172,7 @@ def _band(el: dict, t_mid: float, half_s: float, half_width_km: float, n: int = 
 @app.get("/health")
 def health() -> dict:
     gpu, free_gb = _gpu_info()
-    out = {"ok": True, "gpu": gpu, "free_mem_gb": free_gb, "use_gpu": USE_GPU, "phase": 2, "model": "sim-v1"}
+    out = {"ok": True, "gpu": gpu, "free_mem_gb": free_gb, "use_gpu": USE_GPU, "phase": 2, "model": "sim-v1", "debris_model": "debris-v1"}
     if _engine is not None:
         out.update(n_per_object=_engine.n, horizon_days=_engine.horizon_s / 86400, particle_steps_total=_engine.particle_steps_total)
     return out
@@ -190,6 +210,44 @@ def forecast(body: ForecastIn) -> dict:
         "horizon_days": eng.horizon_s / 86400,
         "particle_steps": eng.particle_steps_total - before,
     }
+
+
+@app.post("/debris")
+def debris_route(body: DebrisIn) -> dict:
+    import numpy as np
+
+    import debris as dm
+
+    t0 = time.perf_counter()
+    eng = engine()
+    cuda = eng.device.type == "cuda"
+    degraded = (not cuda) if body.degraded is None else body.degraded
+    n = body.n_particles or int(os.environ.get("DEBRIS_N") or (2000 if cuda and not degraded else 100))
+    n = max(10, min(n, 20000))
+    rng = np.random.default_rng(body.seed)
+    materials = dm.normalize_materials(body.materials or dm.repo_materials())
+    try:
+        with _engine_lock:
+            comps, _ = dm.prepare_components(body.archetype, body.profile, materials, False)  # validate; full body for drag
+            if body.entry:
+                entry = dm.entry_from_nominal(body.entry, n, rng)
+                bc = np.full(n, dm.default_bc(comps, body.profile)) * np.exp(rng.normal(0, 0.2, n))
+                info = {"source": "entry"}
+            else:
+                if not body.object.elements or not _is_gp(body.object.elements):
+                    raise dm.DebrisInputError("object.elements (GP/OMM) or entry is required")
+                entry, bc, info = dm.entry_from_forecast(
+                    eng, body.object.model_dump(), body.space_weather, _as_of(body.as_of), n, rng
+                )
+            out = dm.run_debris(
+                body.object.id, body.archetype, body.profile, materials, entry, bc, body.space_weather,
+                eng.device, degraded=degraded, seed=body.seed,
+            )
+    except dm.DebrisInputError as e:
+        raise HTTPException(422, str(e))
+    out["entry"] = info
+    out["ms"] = int((time.perf_counter() - t0) * 1000)
+    return out
 
 
 @app.post("/update")
