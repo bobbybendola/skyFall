@@ -27,6 +27,7 @@ export const emptyFC: FC = { type: 'FeatureCollection', features: [] };
 
 export type MapData = {
   corridor?: FC; // polygons with property level (50 | 90)
+  others?: FC; // other objects' 50% corridors, drawn faintly
   track?: FC; // lines
   marker?: FC; // the object's current point
   sightings?: FC; // points with property color, sim (bool)
@@ -34,10 +35,16 @@ export type MapData = {
   pick?: FC; // the phone's chosen point
 };
 
-const SOURCES: (keyof MapData)[] = ['corridor', 'track', 'marker', 'candidates', 'sightings', 'pick'];
+const SOURCES: (keyof MapData)[] = ['others', 'corridor', 'track', 'marker', 'candidates', 'sightings', 'pick'];
 
 function addLayers(map: maplibregl.Map): void {
   for (const s of SOURCES) map.addSource(s, { type: 'geojson', data: emptyFC });
+  map.addLayer({
+    id: 'others',
+    type: 'fill',
+    source: 'others',
+    paint: { 'fill-color': '#7a3fb0', 'fill-opacity': 0.12 },
+  });
   map.addLayer({
     id: 'corridor-90',
     type: 'fill',

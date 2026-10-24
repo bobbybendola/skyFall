@@ -1,9 +1,13 @@
 """gx10-compute: plain HTTP in, JSON out. Never talks to SpacetimeDB.
 
-PHASE 1 STUB. /update does not run the Monte Carlo yet (see docs/SIM_SPEC.md).
-It draws a corridor along a simple circular-orbit ground track and shrinks it
-by a fixed rule as sightings arrive, so the end-to-end pipeline can be tested.
-/classify is a stub that accepts everything.
+/forecast  batched Monte Carlo decay forecast for many objects (sim.py), the GX10's main job
+/update    sighting fusion for one object (sim.py). Objects whose elements are the
+           old "circular-ground-track-stub" model still use the Phase 1 stub below.
+/classify  stub that accepts everything (Phase 3).
+
+USE_GPU=1 runs on CUDA with SIM_N particles per object (default 20000) and a
+HORIZON_DAYS horizon (default 10). On CPU the defaults drop to 300 particles and
+3 days: that is the degraded mode the UI labels.
 """
 
 from __future__ import annotations
@@ -13,20 +17,52 @@ import os
 import time
 from datetime import datetime
 
-from fastapi import FastAPI
+import threading
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 USE_GPU = os.environ.get("USE_GPU", "1") == "1"
 EARTH_R_KM = 6371.0
 EARTH_ROT_DEG_S = 360.0 / 86164.0
 
-app = FastAPI(title="gx10-compute (phase 1 stub)")
+app = FastAPI(title="gx10-compute")
+
+_engine = None
+_engine_lock = threading.Lock()  # one simulation at a time; torch state is shared
+
+
+def engine():
+    global _engine
+    if _engine is None:
+        import torch
+
+        from sim import Engine
+
+        cuda = USE_GPU and torch.cuda.is_available()
+        dev = torch.device("cuda" if cuda else "cpu")
+        n = int(os.environ.get("SIM_N") or (20000 if cuda else 300))
+        horizon = float(os.environ.get("HORIZON_DAYS") or (10 if cuda else 3))
+        _engine = Engine(dev, n_per_object=n, horizon_days=horizon)
+    return _engine
 
 
 class ObjectIn(BaseModel):
+    id: str | None = None
     elements: dict
-    window_start: str  # ISO 8601
-    window_end: str
+    window_start: str | None = None  # ISO 8601; only the stub uses it
+    window_end: str | None = None
+
+
+class ForecastObject(BaseModel):
+    id: str
+    elements: dict  # GP / OMM JSON (CelesTrak, Space-Track)
+
+
+class ForecastIn(BaseModel):
+    objects: list[ForecastObject]
+    space_weather: dict | None = None
+    as_of: str | None = None  # ISO 8601; default now (replays pass the event time)
 
 
 class SightingIn(BaseModel):
@@ -41,7 +77,8 @@ class SightingIn(BaseModel):
 class UpdateIn(BaseModel):
     object: ObjectIn
     sightings: list[SightingIn] = []
-    space_weather: dict | None = None  # {kp, f107}; widens drag spread in phase 2
+    space_weather: dict | None = None  # {kp, f107}
+    as_of: str | None = None
 
 
 class ClassifyIn(BaseModel):
@@ -115,7 +152,10 @@ def _band(el: dict, t_mid: float, half_s: float, half_width_km: float, n: int = 
 @app.get("/health")
 def health() -> dict:
     gpu, free_gb = _gpu_info()
-    return {"ok": True, "gpu": gpu, "free_mem_gb": free_gb, "model": "stub", "use_gpu": USE_GPU, "phase": 1}
+    out = {"ok": True, "gpu": gpu, "free_mem_gb": free_gb, "use_gpu": USE_GPU, "phase": 2, "model": "sim-v1"}
+    if _engine is not None:
+        out.update(n_per_object=_engine.n, horizon_days=_engine.horizon_s / 86400, particle_steps_total=_engine.particle_steps_total)
+    return out
 
 
 @app.post("/classify")
@@ -123,10 +163,55 @@ def classify(_body: ClassifyIn) -> dict:
     return {"label": "reentry", "confidence": 0.5, "reason": "stub classifier (phase 1): accepts everything"}
 
 
+def _is_gp(el: dict) -> bool:
+    return "MEAN_MOTION" in el and "EPOCH" in el
+
+
+def _as_of(s: str | None):
+    if not s:
+        return None
+    from sim import parse_time
+
+    return parse_time(s)
+
+
+@app.post("/forecast")
+def forecast(body: ForecastIn) -> dict:
+    t0 = time.perf_counter()
+    eng = engine()
+    before = eng.particle_steps_total
+    with _engine_lock:
+        results = eng.forecast([o.model_dump() for o in body.objects], body.space_weather, _as_of(body.as_of))
+    return {
+        "results": results,
+        "ms": int((time.perf_counter() - t0) * 1000),
+        "device": str(eng.device),
+        "n_per_object": eng.n,
+        "horizon_days": eng.horizon_s / 86400,
+        "particle_steps": eng.particle_steps_total - before,
+    }
+
+
 @app.post("/update")
 def update(body: UpdateIn) -> dict:
     t0 = time.perf_counter()
     el = body.object.elements
+    if _is_gp(el):
+        if not body.object.id:
+            raise HTTPException(400, "object.id required for GP elements")
+        eng = engine()
+        before = eng.particle_steps_total
+        sightings = [s.model_dump() for s in body.sightings]
+        with _engine_lock:
+            out = eng.update(
+                {"id": body.object.id, "elements": el}, sightings, body.space_weather, _as_of(body.as_of)
+            )
+        out["ms"] = int((time.perf_counter() - t0) * 1000)
+        out["particle_steps"] = eng.particle_steps_total - before
+        out["device"] = str(eng.device)
+        return out
+    if not body.object.window_start or not body.object.window_end:
+        raise HTTPException(400, "stub objects need window_start/window_end")
     ws, we = _ts(body.object.window_start), _ts(body.object.window_end)
     k = len(body.sightings)
 

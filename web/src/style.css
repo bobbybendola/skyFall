@@ -37,3 +37,10 @@ button { cursor: pointer; }
   .screen .map { height: 55vh; flex: none; }
   .panel { width: auto; border-left: none; }
 }
+
+.degraded { background: #b3261e; color: #fff; padding: 6px 8px; font-weight: 600; font-size: 12px; margin: 6px 0; }
+table.list { width: 100%; }
+table.list tr { cursor: pointer; }
+table.list tr:hover { background: #f3f3f3; }
+table.list tr.sel { background: #fde7e1; font-weight: 600; }
+button.link { background: none; border: none; color: #1f4e9c; padding: 2px 0; text-decoration: underline; }

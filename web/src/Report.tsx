@@ -14,7 +14,16 @@ export function Report() {
   const [mine] = useTable(tables.mySightings);
   const submit = useReducer(reducers.submitSighting);
 
-  const tracked = objects.filter(o => o.source !== 'CANDIDATE');
+  const [forecasts] = useTable(tables.forecast);
+  // Objects people could see now: real ones forecast to come down soonest, then the replay.
+  const tracked = useMemo(() => {
+    const soon = forecasts
+      .filter(f => f.status === 'ok' && f.decayedFrac > 0.02 && f.tQ50)
+      .sort((a, b) => ms(a.tQ50) - ms(b.tQ50))
+      .map(f => objects.find(o => o.id === f.objectId))
+      .filter((o): o is (typeof objects)[number] => !!o);
+    return [...soon, ...objects.filter(o => o.source === 'REPLAY')];
+  }, [forecasts, objects]);
   const [chosen, setChosen] = useState<string | null>(null);
   const obj = tracked.find(o => o.id === (chosen ?? tracked[0]?.id));
   const corridor = corridors.find(c => c.objectId === obj?.id);

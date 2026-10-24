@@ -19,7 +19,9 @@ const REPLAY_TICK_EVERY = 1n * SEC;
 const NOAA_EVERY = 15n * 60n * SEC;
 const CELESTRAK_EVERY = 2n * 3600n * SEC;
 const CELESTRAK_MIN_GAP = 2n * 3600n * SEC; // CelesTrak 403s repeat downloads inside one update
-const LEASE = 10n * SEC; // a claimed job not finished by then goes back to the queue
+const LEASE = 60n * SEC; // fast lane (CLASSIFY/UPDATE). Failover is faster: sweep requeues jobs of workers whose heartbeat stopped
+const LEASE_BULK = 15n * 60n * SEC; // bulk lane (FORECAST); a dead worker's job is requeued sooner by sweep
+const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
 const HEARTBEAT_STALE = 10n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
@@ -165,6 +167,78 @@ const spaceWeather = table(
   }
 );
 
+// Re-entry forecast per object from the GPU Monte Carlo (one row per object).
+const forecast = table(
+  { public: true },
+  {
+    objectId: t.string().primaryKey(),
+    version: t.u32(),
+    status: t.string(), // ok | likely_reentered | error
+    tQ05: t.timestamp().optional(),
+    tQ25: t.timestamp().optional(),
+    tQ50: t.timestamp().optional(),
+    tQ75: t.timestamp().optional(),
+    tQ95: t.timestamp().optional(),
+    decayedFrac: t.f64(), // share of particles that re-entered inside the horizon
+    horizonDays: t.f64(),
+    nSamples: t.u32(),
+    ess: t.f64(),
+    calibrated: t.bool(), // drag fitted to the observed decay rate
+    bcM2Kg: t.f64(),
+    areaKm2_90: t.f64(),
+    tier: t.string(), // gpu | cpu (degraded)
+    device: t.string(),
+    computedAt: t.timestamp(),
+    note: t.string(),
+  }
+);
+
+// Archive of every distinct element set we fetched (CelesTrak / Space-Track).
+// Lets us replay a real re-entry later from the data we had at the time.
+const elementsHistory = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    objectId: t.string().index('btree'),
+    epoch: t.string(),
+    elements: t.string(),
+    fetchedAt: t.timestamp(),
+  }
+);
+
+// Every forecast we published, small: how the prediction moved over time.
+const forecastHistory = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    objectId: t.string().index('btree'),
+    version: t.u32(),
+    tQ05: t.timestamp().optional(),
+    tQ50: t.timestamp().optional(),
+    tQ95: t.timestamp().optional(),
+    decayedFrac: t.f64(),
+    nSamples: t.u32(),
+    tier: t.string(),
+    computedAt: t.timestamp(),
+  }
+);
+
+// One row per finished compute run: what the hardware actually did.
+const computeRun = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    kind: t.string(),
+    tier: t.string(),
+    device: t.string(),
+    objects: t.u32(),
+    particles: t.u64(),
+    particleSteps: t.u64(), // RK4 steps x particles
+    ms: t.u32(),
+    finishedAt: t.timestamp(),
+  }
+);
+
 // Single row, id = 0. Clock = tOffset + (now - startedAt) while running.
 const replayState = table(
   { public: true },
@@ -232,6 +306,10 @@ const spacetimedb = schema({
   feedStatus,
   spaceWeather,
   replayState,
+  forecast,
+  forecastHistory,
+  elementsHistory,
+  computeRun,
   replaySighting,
   workerRegistry,
   sweepTick,
@@ -303,6 +381,28 @@ function enqueueUpdate(ctx: AnyCtx, objectId: string): void {
     error: '',
   });
 }
+
+// One FORECAST job covers every tracked and candidate object (one GPU batch).
+function enqueueForecast(ctx: AnyCtx): void {
+  for (const j of ctx.db.computeJob.objectId.filter('*')) {
+    if (j.kind === 'FORECAST' && j.status === 'QUEUED') return;
+  }
+  ctx.db.computeJob.insert({
+    id: 0n,
+    kind: 'FORECAST',
+    objectId: '*',
+    sightingId: undefined,
+    status: 'QUEUED',
+    claimedBy: undefined,
+    claimedAt: undefined,
+    attempts: 0,
+    createdAt: ctx.timestamp,
+    finishedAt: undefined,
+    error: '',
+  });
+}
+
+const laneOf = (kind: string) => (kind === 'FORECAST' ? 'bulk' : 'fast');
 
 function claimedJob(ctx: AnyCtx, jobId: bigint, kind: string) {
   const job = ctx.db.computeJob.id.find(jobId);
@@ -377,10 +477,65 @@ function validateObjectRow(a: { source: string; status: string }): void {
 }
 
 function upsertObject(ctx: AnyCtx, row: any): boolean {
-  const existed = !!ctx.db.reentryObject.id.find(row.id);
+  const before = ctx.db.reentryObject.id.find(row.id);
+  const existed = !!before;
+  let epoch = '';
+  try {
+    epoch = String(JSON.parse(row.elements).EPOCH ?? '');
+  } catch {
+    /* not GP elements */
+  }
+  if (epoch) {
+    let prevEpoch = '';
+    try {
+      prevEpoch = before ? String(JSON.parse(before.elements).EPOCH ?? '') : '';
+    } catch {
+      /* ignore */
+    }
+    if (epoch !== prevEpoch) {
+      ctx.db.elementsHistory.insert({ id: 0n, objectId: row.id, epoch, elements: row.elements, fetchedAt: ctx.timestamp });
+    }
+  }
   if (existed) ctx.db.reentryObject.id.update(row);
   else ctx.db.reentryObject.insert(row);
   return !existed;
+}
+
+function writeCorridor(
+  ctx: AnyCtx,
+  objectId: string,
+  bands: string,
+  areaKm2_90: number,
+  nSamples: number,
+  nSightingsUsed: number,
+  jobMs: number,
+  tier: string
+): void {
+  const prev = ctx.db.corridor.objectId.find(objectId);
+  const version = prev ? prev.version + 1 : 1;
+  const row = {
+    objectId,
+    version,
+    bands,
+    areaKm2_90,
+    nSamples,
+    nSightingsUsed,
+    computedAt: ctx.timestamp,
+    computedBy: ctx.sender,
+  };
+  if (prev) ctx.db.corridor.objectId.update(row);
+  else ctx.db.corridor.insert(row);
+  ctx.db.corridorHistory.insert({
+    id: 0n,
+    objectId,
+    version,
+    bands,
+    areaKm2_90,
+    nSightingsUsed,
+    computedAt: ctx.timestamp,
+    jobMs,
+    tier,
+  });
 }
 
 function recordFeed(ctx: AnyCtx, feed: string, ok: boolean, error: string, rows: number): void {
@@ -514,6 +669,12 @@ function pollNoaa(ctx: any): void {
     };
     if (prev) tx.db.spaceWeather.key.update(row);
     else tx.db.spaceWeather.insert(row);
+    // Drag depends on space weather: re-forecast when it moves noticeably.
+    const moved =
+      !prev ||
+      (row.kp !== undefined && Math.abs((prev.kp ?? row.kp) - row.kp) >= 1) ||
+      (row.f107 !== undefined && Math.abs((prev.f107 ?? row.f107) - row.f107) >= 10);
+    if (moved) enqueueForecast(tx);
     recordFeed(tx, 'noaa_swpc', err === '', err, (kp !== undefined ? 1 : 0) + (f107 !== undefined ? 1 : 0));
   });
 }
@@ -558,6 +719,7 @@ function pollCelestrak(ctx: any): void {
       });
     }
     recordFeed(tx, 'celestrak_decaying', err === '', err, rows.length);
+    if (rows.length > 0) enqueueForecast(tx); // new elements -> new forecasts
   });
 }
 
@@ -610,7 +772,6 @@ export const submitSighting = spacetimedb.reducer(
   (ctx, a) => {
     const obj = ctx.db.reentryObject.id.find(a.objectId);
     if (!obj) throw new SenderError('unknown object');
-    if (obj.source === 'CANDIDATE') throw new SenderError('object is not being tracked');
     if (!(a.lat >= -90 && a.lat <= 90 && a.lon >= -180 && a.lon <= 180)) {
       throw new SenderError('lat/lon out of range');
     }
@@ -641,14 +802,18 @@ export const claimJob = spacetimedb.reducer({}, ctx => {
     const gpuUp = [...ctx.db.computeStatus.iter()].some(w => w.tier === 'gpu' && w.healthy);
     if (gpuUp) return;
   }
+  // Two lanes per worker: one bulk job (FORECAST) and one fast job
+  // (CLASSIFY/UPDATE) at a time, so a long forecast never delays a sighting.
+  const busy = new Set<string>();
   for (const j of ctx.db.computeJob.iter()) {
-    if (j.claimedBy && j.claimedBy.isEqual(ctx.sender) && j.status === 'CLAIMED') return; // one at a time
+    if (j.claimedBy && j.claimedBy.isEqual(ctx.sender) && j.status === 'CLAIMED') busy.add(laneOf(j.kind));
   }
+  const rank = (k: string) => (k === 'CLASSIFY' ? 0 : k === 'UPDATE' ? 1 : 2);
   let next: any = null;
   for (const j of ctx.db.computeJob.iter()) {
-    if (j.status !== 'QUEUED') continue;
-    // CLASSIFY first (it gates the sighting), then oldest.
-    if (!next || (j.kind === 'CLASSIFY' && next.kind !== 'CLASSIFY') || (j.kind === next.kind && j.id < next.id)) {
+    if (j.status !== 'QUEUED' || busy.has(laneOf(j.kind))) continue;
+    // CLASSIFY first (it gates the sighting), then UPDATE, then FORECAST; oldest first.
+    if (!next || rank(j.kind) < rank(next.kind) || (rank(j.kind) === rank(next.kind) && j.id < next.id)) {
       next = j;
     }
   }
@@ -703,31 +868,7 @@ export const publishCorridor = spacetimedb.reducer(
         lastJobMs: a.jobMs,
       });
     }
-    const prev = ctx.db.corridor.objectId.find(job.objectId);
-    const version = prev ? prev.version + 1 : 1;
-    const row = {
-      objectId: job.objectId,
-      version,
-      bands: a.bands,
-      areaKm2_90: a.areaKm2_90,
-      nSamples: a.nSamples,
-      nSightingsUsed: a.nSightingsUsed,
-      computedAt: ctx.timestamp,
-      computedBy: ctx.sender,
-    };
-    if (prev) ctx.db.corridor.objectId.update(row);
-    else ctx.db.corridor.insert(row);
-    ctx.db.corridorHistory.insert({
-      id: 0n,
-      objectId: job.objectId,
-      version,
-      bands: a.bands,
-      areaKm2_90: a.areaKm2_90,
-      nSightingsUsed: a.nSightingsUsed,
-      computedAt: ctx.timestamp,
-      jobMs: a.jobMs,
-      tier,
-    });
+    writeCorridor(ctx, job.objectId, a.bands, a.areaKm2_90, a.nSamples, a.nSightingsUsed, a.jobMs, tier);
 
     // Per-sighting consistency from the simulation feeds trust and HELD.
     let scores: Array<{ id: number | string; p_inlier: number }> = [];
@@ -770,6 +911,123 @@ export const failJob = spacetimedb.reducer({ jobId: t.u64(), error: t.string() }
   });
 });
 
+// results: JSON list from gx10-compute /forecast. Writes the forecast table and,
+// where the object re-enters inside the horizon, a new corridor version.
+export const publishForecast = spacetimedb.reducer(
+  {
+    jobId: t.u64(),
+    results: t.string(),
+    jobMs: t.u32(),
+    particleSteps: t.u64(),
+    nPerObject: t.u32(),
+    device: t.string(),
+  },
+  (ctx, a) => {
+    requireRole(ctx, 'worker');
+    const job = claimedJob(ctx, a.jobId, 'FORECAST');
+    finishJob(ctx, job);
+    const me = ctx.db.computeStatus.worker.find(ctx.sender);
+    const tier = me?.tier ?? 'unknown';
+    let results: any[];
+    try {
+      results = JSON.parse(a.results);
+    } catch {
+      throw new SenderError('results must be JSON');
+    }
+    const ts = (iso?: string) => (iso ? Timestamp.fromDate(new Date(iso)) : undefined);
+    let objects = 0;
+    for (const r of results) {
+      const obj = ctx.db.reentryObject.id.find(String(r.id));
+      if (!obj) continue;
+      objects++;
+      const q = r.t_quantiles ?? {};
+      const prev = ctx.db.forecast.objectId.find(obj.id);
+      const row = {
+        objectId: obj.id,
+        version: prev ? prev.version + 1 : 1,
+        status: String(r.status ?? 'error'),
+        tQ05: ts(q['5']),
+        tQ25: ts(q['25']),
+        tQ50: ts(q['50']),
+        tQ75: ts(q['75']),
+        tQ95: ts(q['95']),
+        decayedFrac: Number(r.decayed_frac ?? 0),
+        horizonDays: Number(r.horizon_days ?? 0),
+        nSamples: Number(r.n_samples ?? 0),
+        ess: Number(r.ess ?? 0),
+        calibrated: !!r.calibrated,
+        bcM2Kg: Number(r.bc_m2_kg ?? 0),
+        areaKm2_90: Number(r.area_km2_90 ?? 0),
+        tier,
+        device: a.device,
+        computedAt: ctx.timestamp,
+        note: String(r.error ?? '').slice(0, 200),
+      };
+      if (prev) ctx.db.forecast.objectId.update(row);
+      else ctx.db.forecast.insert(row);
+      ctx.db.forecastHistory.insert({
+        id: 0n,
+        objectId: obj.id,
+        version: row.version,
+        tQ05: row.tQ05,
+        tQ50: row.tQ50,
+        tQ95: row.tQ95,
+        decayedFrac: row.decayedFrac,
+        nSamples: row.nSamples,
+        tier,
+        computedAt: ctx.timestamp,
+      });
+      // Only re-draw the corridor from the forecast while no sightings shape it.
+      const hasSightings = [...ctx.db.sighting.objectId.filter(obj.id)].some(
+        (s: any) => s.verdict === 'ACCEPTED' || s.verdict === 'HELD'
+      );
+      if (Array.isArray(r.bands) && r.bands.length > 0 && !hasSightings) {
+        writeCorridor(ctx, obj.id, JSON.stringify(r.bands), row.areaKm2_90, row.nSamples, 0, a.jobMs, tier);
+      }
+    }
+    ctx.db.computeRun.insert({
+      id: 0n,
+      kind: 'FORECAST',
+      tier,
+      device: a.device,
+      objects,
+      particles: BigInt(objects) * BigInt(a.nPerObject),
+      particleSteps: a.particleSteps,
+      ms: a.jobMs,
+      finishedAt: ctx.timestamp,
+    });
+    if (me) {
+      ctx.db.computeStatus.worker.update({
+        ...me,
+        variantsRunTotal: me.variantsRunTotal + BigInt(objects) * BigInt(a.nPerObject),
+        lastJobMs: a.jobMs,
+      });
+    }
+  }
+);
+
+// One-off: archive the elements we already hold (objects ingested before the
+// archive existed). Skips objects whose current epoch is already archived.
+export const archiveCurrentElements = spacetimedb.reducer({}, ctx => {
+  requireRole(ctx, 'operator');
+  for (const o of ctx.db.reentryObject.iter()) {
+    let epoch = '';
+    try {
+      epoch = String(JSON.parse(o.elements).EPOCH ?? '');
+    } catch {
+      continue;
+    }
+    if (!epoch) continue;
+    const have = [...ctx.db.elementsHistory.objectId.filter(o.id)].some((h: any) => h.epoch === epoch);
+    if (!have) ctx.db.elementsHistory.insert({ id: 0n, objectId: o.id, epoch, elements: o.elements, fetchedAt: o.updatedAt });
+  }
+});
+
+export const requestForecast = spacetimedb.reducer({}, ctx => {
+  requireRole(ctx, 'operator');
+  enqueueForecast(ctx);
+});
+
 // Heartbeat. healthy=false is also set by the sweeper when this goes stale.
 export const reportComputeStatus = spacetimedb.reducer(
   { tier: t.string(), gpuName: t.string(), healthy: t.bool() },
@@ -795,8 +1053,21 @@ export const reportComputeStatus = spacetimedb.reducer(
 // Every 2 s: expire job leases and mark silent workers unhealthy.
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
+  const unhealthy = new Set<string>();
+  for (const w of ctx.db.computeStatus.iter()) {
+    if (!w.healthy || olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) unhealthy.add(w.worker.toHexString());
+  }
+  let forecastPending = false;
+  let lastForecast = 0n;
   for (const j of [...ctx.db.computeJob.iter()]) {
-    if (j.status !== 'CLAIMED' || !olderThan(ctx, j.claimedAt, LEASE)) continue;
+    if (j.kind === 'FORECAST') {
+      if (j.status === 'QUEUED' || j.status === 'CLAIMED') forecastPending = true;
+      if (micros(j.createdAt) > lastForecast) lastForecast = micros(j.createdAt);
+    }
+    if (j.status !== 'CLAIMED') continue;
+    const lease = j.kind === 'FORECAST' ? LEASE_BULK : LEASE;
+    const holderDown = j.claimedBy ? unhealthy.has(j.claimedBy.toHexString()) : true;
+    if (!holderDown && !olderThan(ctx, j.claimedAt, lease)) continue;
     const giveUp = j.attempts >= MAX_ATTEMPTS;
     ctx.db.computeJob.id.update({
       ...j,
@@ -804,9 +1075,10 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
       claimedBy: undefined,
       claimedAt: undefined,
       finishedAt: giveUp ? ctx.timestamp : undefined,
-      error: 'lease expired',
+      error: holderDown ? 'worker went down' : 'lease expired',
     });
   }
+  if (!forecastPending && micros(ctx.timestamp) - lastForecast > FORECAST_EVERY) enqueueForecast(ctx);
   for (const w of [...ctx.db.computeStatus.iter()]) {
     if (olderThan(ctx, w.updatedAt, WORKER_FORGET)) {
       ctx.db.computeStatus.worker.delete(w.worker); // gone for good: drop it from the panel

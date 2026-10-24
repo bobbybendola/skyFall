@@ -7,15 +7,18 @@ import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
 import ApproveWorkerReducer from "../approve_worker_reducer";
+import ArchiveCurrentElementsReducer from "../archive_current_elements_reducer";
 import ClaimJobReducer from "../claim_job_reducer";
 import FailJobReducer from "../fail_job_reducer";
 import IngestObjectReducer from "../ingest_object_reducer";
 import LoadReplayScriptReducer from "../load_replay_script_reducer";
 import PauseReplayReducer from "../pause_replay_reducer";
 import PublishCorridorReducer from "../publish_corridor_reducer";
+import PublishForecastReducer from "../publish_forecast_reducer";
 import RegisterWorkerReducer from "../register_worker_reducer";
 import ReportComputeStatusReducer from "../report_compute_status_reducer";
 import ReportFeedStatusReducer from "../report_feed_status_reducer";
+import RequestForecastReducer from "../request_forecast_reducer";
 import ResetDemoReducer from "../reset_demo_reducer";
 import RevokeWorkerReducer from "../revoke_worker_reducer";
 import SetVerdictReducer from "../set_verdict_reducer";
@@ -23,15 +26,18 @@ import StartReplayReducer from "../start_replay_reducer";
 import SubmitSightingReducer from "../submit_sighting_reducer";
 
 export type ApproveWorkerParams = __Infer<typeof ApproveWorkerReducer>;
+export type ArchiveCurrentElementsParams = __Infer<typeof ArchiveCurrentElementsReducer>;
 export type ClaimJobParams = __Infer<typeof ClaimJobReducer>;
 export type FailJobParams = __Infer<typeof FailJobReducer>;
 export type IngestObjectParams = __Infer<typeof IngestObjectReducer>;
 export type LoadReplayScriptParams = __Infer<typeof LoadReplayScriptReducer>;
 export type PauseReplayParams = __Infer<typeof PauseReplayReducer>;
 export type PublishCorridorParams = __Infer<typeof PublishCorridorReducer>;
+export type PublishForecastParams = __Infer<typeof PublishForecastReducer>;
 export type RegisterWorkerParams = __Infer<typeof RegisterWorkerReducer>;
 export type ReportComputeStatusParams = __Infer<typeof ReportComputeStatusReducer>;
 export type ReportFeedStatusParams = __Infer<typeof ReportFeedStatusReducer>;
+export type RequestForecastParams = __Infer<typeof RequestForecastReducer>;
 export type ResetDemoParams = __Infer<typeof ResetDemoReducer>;
 export type RevokeWorkerParams = __Infer<typeof RevokeWorkerReducer>;
 export type SetVerdictParams = __Infer<typeof SetVerdictReducer>;
