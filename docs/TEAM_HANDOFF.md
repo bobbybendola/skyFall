@@ -9,81 +9,77 @@ Repo: https://github.com/bobbybendola/skyFall (private for now).
 
 ## 1. What we are building (30-second version)
 
-When a satellite or rocket body falls back to Earth, the official prediction is a time window hours wide and a path thousands of kilometres long. SKYFALL turns that into a live map that **narrows as people report seeing it**:
+**Pivot on Oct 24, after talking to SpaceX.** Full reasoning and scope: `docs/PIVOT.md`.
 
-1. Real orbit data (CelesTrak, Space-Track) and real space weather (NOAA) flow into **SpacetimeDB**.
-2. The **ASUS GX10** (GPU) runs a Monte Carlo simulation, with thousands of slightly different versions of the orbit, to draw a re-entry corridor (50% and 90% bands).
-3. People tap where they saw a streak on their phone (`/report`). Each sighting goes to the GX10, which reweights the simulation and checks whether the report is consistent. Bad reports are held and good reporters gain trust.
-4. Every screen sees the corridor shrink live. If the GX10 is unplugged, a backup worker takes over in degraded mode, and the screen says so.
+**SKYFALL predicts what survives when satellites come down: which pieces, how big, what they're made of, and where they land, live on a 3D globe and computed on our own GPU.**
 
-**Demo:** a replay of a **real past re-entry** (real orbit data; the sightings are simulated and labeled), plus a live map of the ~70 objects actually decaying right now.
+1. Real orbit data (CelesTrak, Space-Track), real space weather (NOAA) and real catalog data about each satellite's mass, size and shape (GCAT, SATCAT, DISCOSweb) flow into **SpacetimeDB**.
+2. The **ASUS GX10** forecasts when and where each decaying object re-enters (Monte Carlo over orbit and atmosphere uncertainty).
+3. For every object likely to come down soon, the GX10 then simulates its **break-up**:
+   - the satellite splits into components from a documented "archetype" (tanks, reaction wheels, panels, structure)
+   - each piece flies through the atmosphere, heats up and melts or survives
+   - outputs: survival chance, mass, impact zone and impact energy per piece
+4. Everything streams through SpacetimeDB to a **3D globe**: live objects, falling-debris trajectories, impact zones, and a per-object breakdown. If the GX10 is unplugged, a backup worker runs a much smaller, visibly degraded model.
 
-**Honesty rules:** anything simulated is labeled simulated in code, UI and README. We never claim to know where something lands, only where to look and how uncertain that is.
+**Honesty rules:**
+- We don't have operators' internal designs, so every debris number is a **modeled estimate**, with its archetype and sources one click away.
+- We show probabilities and zones, never a pinpoint.
+- Anything simulated or replayed is labeled.
 
 ---
 
-## 2. Status (updated Oct 24, ~10:00 PT)
+## 2. Status (updated Oct 24, ~14:00 PT)
 
 | Area | State |
 |---|---|
-| SpacetimeDB module (`spacetimedb/`) | **Live on maincloud** as `skyfall-calhacks`. Job queue, leases, GPU→CPU failover, trust, replay clock, NOAA + CelesTrak fetching inside the database |
-| Worker (`services/gx10-bridge`) | Done. Tested with a laptop standing in for the GX10 |
-| Compute (`services/gx10-compute`) | **Stub only** (fake shrink). Phase 2 replaces it with the real GPU simulation |
-| Operator console (`tools/demo-ctl`) | Done |
-| Web (`web/`) | Working prototype with plain styling. The visual design comes later in Claude Design |
-| Phase 1 checkpoint | **Passed:** sighting → new corridor on screen in 0.39 s; GPU worker killed → backup took over in 7 s |
-| GX10 | Being set up by Steven (CUDA, PyTorch, worker) |
-| Live data now | NOAA Kp/F10.7 every 15 min; 70–71 CelesTrak decaying objects every 2 h, plotted live with SGP4 |
+| SpacetimeDB module (`spacetimedb/`) | **Live on maincloud** as `skyfall-calhacks`. Queue, two lanes, failover, NOAA + CelesTrak feeds, forecasts, archives. Debris tables **not built yet** (contract in ARCHITECTURE.md) |
+| Forecast engine (`services/gx10-compute/sim.py`) | Done; ran on CPU for all 71 objects. Not yet run on the GX10 |
+| Debris model (`/debris`) | **Spec only** (`docs/DEBRIS_MODEL.md`) |
+| Worker, operator console | Done for FORECAST; DEBRIS handler to add |
+| Web | 2D prototype (MapLibre) with live forecasts. **To be replaced by the 3D globe** |
+| Crowd sightings, replay, corridor | Parked (code stays, not in the demo) |
+| Archive | Element sets and forecasts archived since ~11:00 PT, for validating a real re-entry this weekend |
 
 ---
 
 ## 3. Decisions already made (don't reopen without Steven)
 
-- **SpacetimeDB is the backend**, not just storage. Every rule (validation, queue, leases, failover, trust, feed politeness) lives in a reducer or procedure. Workers and web pages are thin. See `AGENTS.md`.
-- **GX10 job for Phase 2:** Monte Carlo corridors for **all** decaying objects (not just the demo replay), refreshed when orbit or space-weather data changes. Without the GX10 the product falls back to a much smaller, visibly degraded run.
-- **Replay event:** a **real past re-entry**. Candidates to be proposed; pick in Phase 2.
-- **Hosting:** a free **.Tech domain** (MLH prize) plus a **Vultr** server that hosts the website and runs the degraded CPU backup worker (MLH Best Use of Vultr).
-- **Design and slides:** only after the prototype is solid. Then use Claude Design for the UI, and a deck after the demo works.
-- **Database name:** `skyfall-calhacks` on maincloud. Phones reach it from any network.
+- **SpacetimeDB is the backend**, not just storage. Every rule lives in a reducer or procedure; workers and pages are thin. See `AGENTS.md`.
+- **Debris focus: re-entry break-up** (pieces reaching the ground). In-orbit breakup clouds are a stretch.
+- **Archetypes, not designs:** about 6 documented component lists per satellite class, every number sourced; outputs labeled "modeled estimate".
+- **The GX10 does the heavy work:** forecasts for all objects + debris Monte Carlo per object. CPU fallback = degraded mode, shown on screen.
+- **Hosting:** free .Tech domain (MLH) + Vultr server for the web build and the CPU fallback worker.
+- **Design and slides** after the prototype works (Claude Design).
+- **Database:** `skyfall-calhacks` on maincloud.
 
-**Open decisions:** 4th sponsor track (Anthropic vs Mana.space); which real re-entry to replay; exact domain name.
+**Open decisions:** globe library (CesiumJS recommended), validation case, 4th sponsor track (Anthropic or Mana), exact domain name.
 
 ---
 
 ## 4. Sponsor tracks we're entering
 
-Details and criteria: `docs/SPONSORS.md`.
+Details: `docs/SPONSORS.md`.
 
-| Track | What judges need to see | Owner of the story |
-|---|---|---|
-| **SpacetimeDB** (core, $2048/$1024/$512) | SpacetimeDB as the real-time backend: the shared job queue, failover, live sync to every screen | backend |
-| **SpaceXAI "Make it Legendary"** | Built with **Cursor**; uses the **Grok Voice or Imagine API**; space/public data. Plan: Grok sky assistant ("where and when to look"), Grok Imagine test images. Starlink re-entries are most of the live list | AI |
-| **MLH Build Your Hackathon A-Team** | Cursor as the main coding agent + Grok Bot for planning, described in the Devpost write-up | everyone |
-| **4th: Anthropic or Mana.space** | TBD | TBD |
-| **MLH Best .Tech Domain**, **MLH Best Use of Vultr** | Domain points at the site; Vultr hosts the site and the backup worker | infra |
+| Track | What judges need to see |
+|---|---|
+| **SpacetimeDB** (core) | SpacetimeDB as the real-time backend: GPU job queue with failover, forecasts → debris jobs chained by reducers, live sync of large result sets to every globe |
+| **SpaceXAI "Make it Legendary"** | Built with **Cursor**; **Grok Voice** assistant ("what's coming down near me, does any of it survive?"); real space data; directly relevant to constellation operators |
+| **MLH A-Team** | Cursor as the main coding agent + Grok Bot for planning, described in the Devpost write-up |
+| **4th: Anthropic or Mana.space** | TBD |
+| **MLH .Tech domain, MLH Best Use of Vultr** | Domain → site; Vultr hosts the site and the degraded backup worker |
 
-**Everyone:** do real work in **Cursor** and add a line to `docs/TOOL_LOG.md` when Cursor or Grok does something notable. The SpaceXAI and MLH tracks require it.
+**Everyone:** do real work in **Cursor** and log notable Cursor or Grok uses in `docs/TOOL_LOG.md`.
 
 ---
 
 ## 5. How it fits together
 
-```
-NOAA, CelesTrak ──HTTP (fetched by the database itself)──┐
-Space-Track ──► feed-poller ──reducers──┐                │
-                                        ▼                ▼
-Phones /report ──submit_sighting──►  SpacetimeDB (maincloud, skyfall-calhacks)
-Big screen /   ◄──live subscriptions── tables: reentry_object, sighting, corridor,
-                                        corridor_history, compute_job, compute_status,
-                                        feed_status, space_weather, replay_state ...
-                                        │ jobs (QUEUED)        ▲ results via reducers
-                                        ▼                      │
-                          gx10-bridge worker (gpu on GX10, cpu on Vultr) ──HTTP──► gx10-compute
-```
-
-- A sighting creates a job row. A worker claims it (`claim_job`, with a 10 s lease), calls compute, and writes back (`publish_corridor` / `set_verdict`). The database versions the corridor, updates trust, and every screen redraws.
-- **Failover is a database rule:** CPU workers only get jobs while no healthy GPU worker exists. `sweep` (every 2 s) expires leases and marks silent workers unhealthy.
-- Full table/reducer contract: `docs/ARCHITECTURE.md`. Change names only by editing that file in the same PR.
+See the diagram in `docs/ARCHITECTURE.md`. In short:
+- CelesTrak / NOAA → fetched by the database itself → `reentry_object`, `space_weather`.
+- Every 20 min (or on new data) a FORECAST job → GPU → `forecast`.
+- `publish_forecast` queues a DEBRIS job for each object likely to re-enter within 72 h → GPU `/debris` → `publish_debris` → `debris_forecast`, `debris_component`, `debris_track`.
+- The 3D globe subscribes to those tables and animates them.
+- **Failover is a database rule:** CPU workers only get jobs while no healthy GPU worker exists; `sweep` requeues a dead worker's jobs.
 
 ---
 
@@ -92,13 +88,14 @@ Big screen /   ◄──live subscriptions── tables: reentry_object, sightin
 | Path | What it is | Language |
 |---|---|---|
 | `spacetimedb/src/index.ts` | The backend: all tables, reducers, scheduled jobs, feed fetchers | TypeScript |
-| `services/gx10-compute/app.py` | Physics + vision over plain HTTP (`/health`, `/update`, `/classify`); never touches the DB | Python, FastAPI, PyTorch |
+| `services/gx10-compute/app.py`, `sim.py` | GPU physics over plain HTTP: `/forecast` (built), `/debris` (planned, `debris.py`), `/fragment` (stretch); never touches the DB | Python, FastAPI, PyTorch |
 | `services/gx10-bridge/src/worker.ts` | Stateless worker: claim job → call compute → write result | TypeScript (Node 22) |
 | `tools/demo-ctl/src/ctl.ts` | Operator console: approve workers, seed, replay controls, status | TypeScript |
-| `web/src/` | `BigScreen.tsx` (`/`), `Report.tsx` (`/report`), `MapView.tsx` (MapLibre), `orbit.ts` (SGP4 + track), `live.ts` (helpers) | React, Vite, MapLibre |
+| `web/src/` | Today: 2D prototype (`BigScreen.tsx`, `MapView.tsx`). Planned: CesiumJS 3D globe; `orbit.ts` (SGP4) and `live.ts` (helpers) are reused | React, Vite, CesiumJS |
 | `*/src/module_bindings/` | **Generated** client code. Never edit by hand; regenerate (section 8) | — |
-| `data/replay/` | Replay event files (currently a labeled placeholder) | JSON |
-| `docs/` | `ARCHITECTURE`, `DEV_PLAN`, `SETUP`, `SIM_SPEC`, `LIVE_DATA_SOURCES`, `SPONSORS`, `DEMO`, `GX10_SETUP` | — |
+| `data/archetypes/`, `data/materials.json` (planned) | Component lists per satellite class and material properties, every number sourced | JSON |
+| `data/replay/` | Parked placeholder replay | JSON |
+| `docs/` | `PIVOT` (why/scope/reuse), `ARCHITECTURE` (contract), `DEBRIS_MODEL`, `SIM_SPEC`, `DEV_PLAN`, `SETUP`, `DATA_SOURCES`, `LIVE_DATA_SOURCES`, `SPONSORS`, `DEMO`, `GX10_SETUP` | — |
 
 ---
 
@@ -174,31 +171,27 @@ Gotchas:
 
 ---
 
-## 9. Open tasks (pick one, put your name on it in chat, branch, go)
+## 9. Roles, branches and tasks (works for any team size)
 
-Order matters; earlier items unblock later ones. Estimates are rough.
+Branches already exist on GitHub (created from `docs/debris-pivot`). Each owner works on their branch, pulls `main` often, and opens a PR per finished piece. **R3's schema PR merges first.**
 
-### Phase 2: real GPU simulation, all decaying objects (top priority)
-| # | Task | Where | Est. | Notes |
-|---|---|---|---|---|
-| 2.1 | **Decay simulation on GPU.** From GP elements (mean motion, BSTAR) + Kp/F10.7, Monte Carlo over drag/density uncertainty → re-entry time distribution + ground corridor (50/90%). Batch all objects in one GPU run | `gx10-compute` `/update` (+ new batch endpoint) | 4 h | Follow `docs/SIM_SPEC.md`; PyTorch on CUDA 13. Keep `USE_GPU=0` path with small N |
-| 2.2 | **Module: corridors for CANDIDATE objects.** Queue UPDATE jobs for candidates when CelesTrak/NOAA data changes; store predicted window on the corridor; longer lease (or lease renewal) for big batch jobs | `spacetimedb/src/index.ts` | 2 h | Update ARCHITECTURE.md in the same PR |
-| 2.3 | **Degraded mode.** CPU tier runs small N, only the selected object; corridor rows record tier + N; UI shows "GPU offline: degraded" | module + worker + web | 1.5 h | This is the GX10-dependency demo moment |
-| 2.4 | **Real replay event.** Pick a real past re-entry; get its last orbit data + decay time; write `data/replay/<event>.json` | `data/replay/` | 1.5 h | Space-Track gives the best data (Steven's account only); CelesTrak may be enough |
-| 2.5 | **Simulated sightings + scoring.** `tools/sighting-gen`: noisy reporters, 20–30% bad; score shrink + truth coverage | `tools/sighting-gen` (Python) | 2 h | Output feeds `demo-ctl script` |
-| 2.6 | **Web: all-object view.** Corridors for every decaying object, list sorted by predicted re-entry, click to focus | `web/` | 2 h | Plain styling still |
+| Role | Owns | Branch(es) | Block 1 (→18:00) | Block 2 (→23:00) | Block 3+ |
+|---|---|---|---|---|---|
+| **R1 Globe & UX** (Steven) | `web/` (read `docs/VIS_NOTES.md` first) | `feat/globe-3d` | CesiumJS globe, live objects with altitude, coming-down-next, select | falling-debris animation, impact zones, breakdown + compute panels, degraded banner | debris clouds layer, Claude Design pass, deck |
+| **R2 Debris physics + GX10** | `services/gx10-compute/` | `feat/debris-physics` | GX10 setup + first GPU forecast; `sim.py` state at 80 km; `/debris` v0 (sphere/cylinder heating) with unit checks | v1: all shapes, parent–child, footprints, sample tracks, CUDA batch | perf (CUDA graphs), stretch `/fragment` (NASA SBM) |
+| **R3 Data & backend** | `spacetimedb/`, `services/feed-poller/`, `data/archetypes/`, worker DEBRIS handler | `feat/debris-schema`, `feat/sat-profiles` | debris tables + reducers + DEBRIS job (publish, bindings, merge first); 6 archetypes + materials with sources | GCAT/SATCAT ingest → `ingest_profile` → archetype match; worker DEBRIS handler | CelesTrak debris groups; Space-Track poller |
+| **R4 AI, validation, demo** | `services/assistant/`, validation, hosting, docs | `feat/assistant`, `feat/validation` | pick the validation case (watch tonight's re-entries; find a recovered-debris case) | Grok assistant from tables; validation panel data | Grok Voice; Vultr + .Tech; demo script, README, Devpost |
 
-### Phase 3: live feeds, AI, hosting
-| # | Task | Est. |
-|---|---|---|
-| 3.1 | Space-Track feed-poller (TIP + decay) → `ingest_object` (Steven's machine only; one account) | 2 h |
-| 3.2 | Grok sky assistant (`ASK` jobs, `services/assistant`, chat panel). Spec: ARCHITECTURE.md "Sky assistant" | 4 h |
-| 3.3 | Grok Voice for the assistant (check API first) | 1.5 h |
-| 3.4 | Grok Imagine test images + `/classify` (CLIP-style) | 3 h |
-| 3.5 | **Hosting:** claim the .Tech domain (MLH); Vultr server serves `web` build + runs the `cpu` worker + compute with `USE_GPU=0`; QR code to `/report` | 2 h |
+**Fewer people?**
+- **3:** R4's work splits. Assistant → R3; validation, hosting and demo → R1.
+- **2:** person A = R1 + R4 (web, assistant, demo); person B = R2 + R3 (physics, GX10, backend).
+- **1 + Claude:** follow the block order; Claude takes R3 and R2 first.
+- **More than 4:** split R2 into heating/flight vs footprints/perf, and R1 into globe vs panels.
 
-### Phase 4–5: polish, design, submission
-Claude Design pass on the UI, corridor animation, timeline scrubber, demo script runs 5× clean, slide deck (after the demo works), backup video, README + Devpost write-up (real vs simulated; tool use for each track).
+**Interfaces you can build against right now** (no need to wait for each other):
+- DB tables and reducers: `docs/ARCHITECTURE.md` (planned rows)
+- `/debris` request/response and archetype JSON: `docs/DEBRIS_MODEL.md` §2, §5. R1 can mock the response from that example while R2 builds it
+- Live data already in the DB: `reentry_object`, `forecast`, `space_weather`, `compute_run`
 
 ---
 

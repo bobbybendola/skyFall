@@ -1,54 +1,47 @@
 # SKYFALL
 
-**A live re-entry tracker where a crowd and a GPU shrink the danger zone.**
+**Predicting what survives when satellites come down: which pieces, how big, and where they land, live on a 3D globe.**
 
-About once a week a satellite or rocket stage falls back to Earth uncontrolled. Even in its last orbit or two, the predicted landing time can be off by hours, so authorities close wide strips of airspace to be safe (a 2022 rocket-stage re-entry over Spain led to 300+ delayed, cancelled or rerouted flights, per [Space.com](https://space.com/space-exploration/satellites/the-risk-of-falling-space-junk-hitting-airplanes-is-on-the-rise-experts-warn)).
+Thousands of satellites now re-enter on short lifetimes, plus rocket stages and old debris. Some pieces survive. Tanks, reaction wheels and engine parts have been found on the ground. Yet the public sees at most an orbit dot, and break-up and survivability analyses stay inside operators and agencies.
 
-SKYFALL lets people report what they see. SpacetimeDB is the whole backend: it validates each report, weighs reporters by their track record, queues work for an ASUS Ascent GX10 (with automatic CPU failover), fetches live space weather and decaying-object data itself, and versions every corridor. The GX10 re-simulates thousands of orbit variants on each report, so the predicted corridor visibly shrinks for everyone watching.
+SKYFALL tracks every object that is coming down, forecasts when and where it re-enters, then simulates its **break-up on our own GPU** (an ASUS Ascent GX10): how it splits into components, which pieces melt, and which survive, with their mass, impact energy and impact zone as probabilities. **SpacetimeDB** is the whole backend. It fetches the live data itself, chains the GPU jobs (forecast → debris), handles failover to a CPU backup, keeps the archive, and streams every result to the 3D globe in real time.
 
-> Status: Cal Hacks 13.0 project. Built during the event. Hypothesis, not a proven result: real sightings tighten real predictions. We test the method on a replay with a known true path.
+> Status: Cal Hacks 13.0 project, built during the event. Debris numbers are **modeled estimates** from public data and documented generic component lists ("archetypes"), not operators' internal assessments. Why and how: [docs/PIVOT.md](docs/PIVOT.md).
 
-## What is real vs simulated
+## Real, modeled, simulated
 | Part | Status |
 |---|---|
-| Re-entry watchlist (Space-Track TIP), decaying-object candidates and elements (CelesTrak), space weather (NOAA SWPC) | Real, live |
-| The demo re-entry event | **Replay** of a past event with a known path |
-| Sightings during the demo | **Simulated** (`SIM`: emitted by the replay script, noisy, with bad reports mixed in) plus teammates' real taps tagged `DEMO` |
-| Test images for the vision step | **Synthetic**, generated with Grok Imagine |
-| Orbit simulation | Simplified (two-body + J2 + decay), not a full force model |
+| Orbit elements of decaying objects (CelesTrak; Space-Track if available), space weather (NOAA SWPC) | **Real, live** (fetched by the database) |
+| Satellite mass, size, shape, type (GCAT, CelesTrak SATCAT, ESA DISCOSweb) | **Real catalog data** (often estimates in the catalog itself; flagged) |
+| Re-entry time and place | **Modeled:** Monte Carlo, J2 + drag, NRLMSIS 2.1 atmosphere, drag calibrated to the observed decay |
+| Component lists per satellite class | **Assumed from public sources** (each number cited in `data/archetypes/`) |
+| Break-up, heating, survival, impact zones | **Modeled:** lumped-mass heating, 3-DOF flight (see `docs/DEBRIS_MODEL.md`) |
+| Validation case | Real re-entry (archived live during the event, or a past case with recovered debris) |
 
 ## How it works
-1. Phones submit sightings through the `submit_sighting` reducer. The module validates and rate-limits them and turns each one into a job in the `compute_job` queue.
-2. A worker on the GX10 claims the job (the module grants a lease to exactly one worker), runs the simulation on `gx10-compute`, and publishes the corridor with a reducer. If the GX10 goes silent, the module expires its lease and a CPU worker takes over.
-3. The module versions the corridor, keeps its history, and updates each reporter's trust from the simulation's consistency scores.
-4. Scheduled procedures inside the module fetch NOAA SWPC and CelesTrak. A small poller handles Space-Track (login required). The replay clock that emits simulated sightings also runs inside the module.
-5. The big-screen map and every phone subscribe to the tables, so all views update together.
+1. Scheduled procedures **inside SpacetimeDB** fetch CelesTrak and NOAA; a small poller adds Space-Track and catalog data.
+2. Every 20 minutes (or on new data) the database queues a **forecast** job. The GX10 runs tens of thousands of orbit variants per object and publishes re-entry time distributions.
+3. For each object likely to come down within 72 h, the database queues a **debris** job. The GX10 breaks the object into its archetype's components and flies each one down through the atmosphere with heating and melting, thousands of times.
+4. The **3D globe** subscribes to the results: live objects, falling-debris trajectories, impact zones by material and size, and a per-object breakdown.
+5. Unplug the GX10 and the database hands the work to a CPU worker in **degraded mode** (few samples, wide zones), clearly labeled.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the diagram, tables and reducers.
+Diagram, tables and reducers: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Physics: [docs/SIM_SPEC.md](docs/SIM_SPEC.md) (orbit forecast), [docs/DEBRIS_MODEL.md](docs/DEBRIS_MODEL.md) (break-up and survival).
 
 ## Repo map
-- `spacetimedb/` server module: the backend (tables, reducers, scheduled jobs, feed fetchers, views)
-- `web/` React app: big-screen map (`/`) and phone sighting page (`/report`)
-- `services/gx10-bridge` (worker, `WORKER_TIER=gpu|cpu`), `services/gx10-compute`, `services/feed-poller` (Space-Track only)
-- `tools/demo-ctl` operator console, `tools/sighting-gen`, `tools/imagine-gen`
-- `data/replay`, `data/synthetic-images`
-- `docs/` plans and specs
-
-## Quickstart (fill in as built)
-```bash
-# prerequisites: Node 22+, SpacetimeDB CLI (spacetimedb.com/install), Python 3.11+ with uv
-cp .env.example .env            # add your own keys
-# accounts, CLI install, publish and first-run steps: docs/SETUP.md
-```
-GX10 setup: [docs/GX10_SETUP.md](docs/GX10_SETUP.md). Demo steps: [docs/DEMO.md](docs/DEMO.md).
+- `spacetimedb/` server module: the backend
+- `services/gx10-compute/` GPU physics (`/forecast`, `/debris`); `services/gx10-bridge/` worker (`WORKER_TIER=gpu|cpu`); `services/feed-poller/`; `services/assistant/` (Grok)
+- `web/` 3D globe (`/`)
+- `tools/demo-ctl` operator console
+- `data/archetypes/`, `data/materials.json` component and material assumptions, with sources
+- `docs/` plans and specs. Team: [docs/TEAM_HANDOFF.md](docs/TEAM_HANDOFF.md)
 
 ## Honest limits
-- Public orbit data is only kilometre-accurate. We narrow a corridor; we never claim a pinpoint.
-- The GPU work is a physics simulation plus a vision model, not an LLM.
-- The vision step is tested on synthetic images, so it validates the pipeline, not real-world accuracy.
+- Public orbit data is kilometre-accurate, and re-entry timing is uncertain by hours days out. We show distributions and zones, never pinpoints.
+- We don't know any operator's internal design. Archetypes are generic and sourced, and results can be wrong for a specific satellite.
+- Simplified physics: no winds, no detailed break-up mechanics, tumbling-averaged heating.
 
 ## How we used the tools (fill in before submission)
-- Cursor: _log specific uses_
-- Grok (Imagine / Voice / Bot): _log specific uses_
-- SpacetimeDB: the backend. Shared state, sighting rules and rate limits, reporter trust, the GPU job queue with leases and CPU failover, corridor history, the replay clock, and NOAA/CelesTrak fetching as scheduled procedures. See docs/ARCHITECTURE.md
-- Claude (if used): _the one job it does and where it could go wrong_
+- SpacetimeDB: the backend: feeds, GPU job chain with failover, archive, live sync of results
+- ASUS GX10: forecast + debris Monte Carlo (numbers from `compute_run`)
+- Cursor, Grok (Voice / Bot): _log specific uses_
+- Claude: _what it did_

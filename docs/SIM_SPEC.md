@@ -1,5 +1,7 @@
 # Simulation spec (gx10-compute `/forecast` and `/update`)
 
+> After the debris pivot this file covers the **orbit/re-entry forecast**, which feeds the debris model. Break-up and survival: `docs/DEBRIS_MODEL.md`. The sighting fusion (`/update`) is parked.
+
 > **Implemented (Phase 2) in `services/gx10-compute/sim.py`.** What it does now, superseding sections 1 and 2 below:
 > - Initial state from SGP4 on the latest GP elements; then RK4 (30 s step) with two-body + J2 + drag against a co-rotating atmosphere, float32, batched over all objects × particles on the GPU.
 > - Density: NRLMSIS 2.1 (pymsis) at the current F10.7 / Ap, averaged over latitude and longitude.
