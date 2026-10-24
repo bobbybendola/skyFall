@@ -6,7 +6,7 @@
 // Identity: OPERATOR_TOKEN from .env if set, otherwise the token of your
 // `spacetime login` (read from the CLI config at runtime, never copied).
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Timestamp } from 'spacetimedb';
@@ -47,6 +47,9 @@ const HELP = `commands:
   poll                           fetch NOAA + CelesTrak now
   forecast                       queue a GPU forecast for all objects now
   archive                        archive current elements of every object (one-off backfill)
+  seed-archetypes [dir]          load data/archetypes/*.json, then re-match every profile
+  rematch                        re-match every satellite profile to an archetype
+  debris <object-id>             queue a debris prediction for one object now
   export <file>                  write objects + space weather as JSON (test input for gx10-compute)`;
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -101,6 +104,23 @@ async function runCommand(conn: DbConnection, idHex: string): Promise<void> {
       return r.pauseReplay({});
     case 'reset':
       return r.resetDemo({ objectId: need(args[0], 'event id') });
+    case 'seed-archetypes': {
+      const dir = args[0] ?? join(root, 'data', 'archetypes');
+      const files = readdirSync(dir).filter(f => f.endsWith('.json'));
+      for (const f of files) {
+        const json = readFileSync(join(dir, f), 'utf8');
+        const id = JSON.parse(json).id ?? f.replace(/\.json$/, '');
+        await r.upsertArchetype({ id, json });
+        console.log(`archetype ${id}`);
+      }
+      await r.rematchProfiles({});
+      console.log(`loaded ${files.length} archetypes; profiles re-matched`);
+      return;
+    }
+    case 'rematch':
+      return r.rematchProfiles({});
+    case 'debris':
+      return r.requestDebris({ objectId: need(args[0], 'object id') });
     case 'archive':
       return r.archiveCurrentElements({});
     case 'forecast':

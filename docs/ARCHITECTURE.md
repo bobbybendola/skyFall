@@ -1,5 +1,7 @@
 # Architecture
 
+> **Built (Oct 24 evening):** debris tables, archetypes, profiles, DEBRIS jobs chained after forecasts, `publish_debris`. Archetype data: `data/archetypes/*.json`, `data/materials.json`. Still planned: `/debris` physics (gx10-compute), catalog import, `debris_piece`.
+>
 > **Pivot (Oct 24):** SKYFALL now predicts **debris**: which pieces of a re-entering satellite survive, how big they are, and where they land, on a **3D globe**. Why and scope: `docs/PIVOT.md`. Physics: `docs/DEBRIS_MODEL.md`. Items marked **(planned)** are the contract for the new work; build them exactly as named here, or change this file in the same PR. Items marked **(parked)** stay in the module but are not part of the demo.
 
 ## Principle: SpacetimeDB is the system
@@ -74,12 +76,12 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `forecast_history` | `id` (auto) | `object_id`, `version`, `t_q05?`, `t_q50?`, `t_q95?`, `decayed_frac`, `n_samples`, `tier`, `computed_at` |
 | `elements_history` | `id` (auto) | `object_id`, `epoch`, `elements` (JSON), `fetched_at`. Appended whenever an object's element epoch changes |
 | `compute_run` | `id` (auto) | `kind`, `tier`, `device`, `objects`, `particles`, `particle_steps`, `ms`, `finished_at` |
-| `satellite_profile` (planned) | `norad_id` | `name`, `object_type` (`PAY` \| `R/B` \| `DEB` \| `UNK`), `owner`, `launch_date?`, `mass_kg?`, `dims_m` (JSON), `shape`, `rcs_size?` (`SMALL` \| `MEDIUM` \| `LARGE`), `archetype_id`, `match_reason` (why this archetype), `sources` (JSON list: GCAT / SATCAT / DISCOSweb + field), `confidence` (`low` \| `medium` \| `high`), `updated_at` |
-| `archetype` (planned) | `id` | `name`, `applies_to` (JSON), `components` (JSON, see DEBRIS_MODEL.md §2), `sources` (JSON), `confidence`, `updated_at` |
-| `debris_forecast` (planned) | `object_id` | `version`, `archetype_id`, `forecast_version` (which forecast it used), `n_particles`, `p_any_survives`, `surviving_mass_kg_mean`, `surviving_mass_kg_p95`, `casualty_area_m2_mean`, `footprint` (JSON bands 50/90), `area_km2_90`, `impact_t_q05?`, `impact_t_q50?`, `impact_t_q95?`, `tier`, `device`, `computed_at`, `note` |
-| `debris_component` (planned) | `id` (auto) | `object_id` (index), `version`, `name`, `material`, `shape`, `count`, `mass_kg_start`, `p_survive`, `mass_kg_mean`, `impact_speed_ms_mean`, `impact_energy_j_mean`, `demise_alt_km_mean?`, `footprint` (JSON bands). Rows for the previous version are deleted on publish |
-| `debris_track` (planned) | `id` (auto) | `object_id` (index), `version`, `component`, `survived` (bool), `points` (JSON `[[t_unix, lat, lon, alt_km], ...]`, ≤ 60 points). A few representative trajectories per component for the 3D animation |
-| `debris_history` (planned) | `id` (auto) | `object_id`, `version`, `p_any_survives`, `surviving_mass_kg_mean`, `area_km2_90`, `tier`, `computed_at` |
+| `satellite_profile` | `norad_id` | `name`, `object_type` (`PAY` \| `R/B` \| `DEB` \| `UNK`), `owner`, `launch_date?`, `mass_kg?`, `dims_m` (JSON), `shape`, `rcs_size?` (`SMALL` \| `MEDIUM` \| `LARGE`), `archetype_id`, `match_reason` (why this archetype), `sources` (JSON list: GCAT / SATCAT / DISCOSweb + field), `confidence` (`low` \| `medium` \| `high`), `updated_at` |
+| `archetype` | `id` | `name`, `applies_to` (JSON), `components` (JSON, see DEBRIS_MODEL.md §2), `sources` (JSON), `confidence`, `updated_at` |
+| `debris_forecast` | `object_id` | `version`, `archetype_id`, `forecast_version` (which forecast it used), `n_particles`, `p_any_survives`, `surviving_mass_kg_mean`, `surviving_mass_kg_p95`, `casualty_area_m2_mean`, `footprint` (JSON bands 50/90), `area_km2_90`, `impact_t_q05?`, `impact_t_q50?`, `impact_t_q95?`, `tier`, `device`, `computed_at`, `note` |
+| `debris_component` | `id` (auto) | `object_id` (index), `version`, `name`, `material`, `shape`, `count`, `mass_kg_start`, `p_survive`, `mass_kg_mean`, `impact_speed_ms_mean`, `impact_energy_j_mean`, `demise_alt_km_mean?`, `footprint` (JSON bands). Rows for the previous version are deleted on publish |
+| `debris_track` | `id` (auto) | `object_id` (index), `version`, `component`, `survived` (bool), `points` (JSON `[[t_unix, lat, lon, alt_km], ...]`, ≤ 60 points). A few representative trajectories per component for the 3D animation |
+| `debris_history` | `id` (auto) | `object_id`, `version`, `p_any_survives`, `surviving_mass_kg_mean`, `area_km2_90`, `tier`, `computed_at` |
 | `fragment_event` (stretch) | `id` (auto) | `parent_norad`, `kind` (`EXPLOSION` \| `COLLISION` \| `WHATIF`), `at`, `params` (JSON), `n_fragments`, `status`, `created_by` |
 | `fragment_snapshot` (stretch) | `id` (auto) | `event_id` (index), `t_offset_s`, `positions` (packed base64 float32 `[lat, lon, alt]` × N), `n_alive`, `n_reentered` |
 | `feed_status` | `feed` | `last_attempt_at?`, `last_ok_at?`, `last_error`, `rows_ingested` |
@@ -118,10 +120,11 @@ Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `celest
 | `celestrak_poll` | scheduled procedure, 2 h | module | fetch `SPECIAL=DECAYING` (skips if attempted < 2 h ago, never retries in a loop), upsert `CANDIDATE` objects |
 | `poll_feeds_now` | procedure | operator | run both fetches now (CelesTrak still respects its gap) |
 | `my_sightings` | view | anyone | the caller's own sightings (parked) |
-| `ingest_profile(norad_id, ...)` (planned) | reducer | poller, operator | upsert `satellite_profile`; picks `archetype_id` by the archetype's `applies_to` rules (object type, name pattern, mass range); stores `match_reason` |
-| `upsert_archetype(id, json)` (planned) | reducer | operator | validate and store an archetype (components must have material, shape, mass, dims) |
-| `publish_debris(job_id, result, job_ms, particle_steps, device)` (planned) | reducer | worker holding the DEBRIS job | write `debris_forecast` (+version), replace `debris_component` / `debris_track` rows, append `debris_history`, log `compute_run` |
-| `request_debris(object_id)` (planned) | reducer | operator | queue a DEBRIS job now (also queued automatically by `publish_forecast` when `decayed_frac` ≥ 0.2 within 72 h; at most one QUEUED per object) |
+| `ingest_profile(norad_id, ...)` | reducer | poller, operator | upsert `satellite_profile`; picks `archetype_id` by the archetype's `applies_to` rules (object type, name pattern, mass range); stores `match_reason` |
+| `upsert_archetype(id, json)` | reducer | operator | validate and store an archetype (components must have material, shape, mass, dims) |
+| `publish_debris(job_id, result, job_ms, particle_steps, device)` | reducer | worker holding the DEBRIS job | write `debris_forecast` (+version), replace `debris_component` / `debris_track` rows, append `debris_history`, log `compute_run` |
+| `rematch_profiles()` | reducer | operator | make sure every object has a profile (guessed from its name: DEB / R/B / PAY, confidence low) and re-match all profiles to archetypes; run after loading archetypes (`demo-ctl seed-archetypes`) |
+| `request_debris(object_id)` | reducer | operator | queue a DEBRIS job now (also queued automatically by `publish_forecast` when `decayed_frac` ≥ 0.2 within 72 h; at most one QUEUED per object) |
 | `create_fragment_event(parent_norad, kind, params)` (stretch) | reducer | operator | insert `fragment_event` + a FRAGMENT job |
 | `publish_fragment(job_id, snapshots, ...)` (stretch) | reducer | worker | write `fragment_snapshot` rows; new tracked pieces are not added to `reentry_object` |
 | `ask_assistant(text, lat?, lon?)` (planned) | reducer | anyone | text 1–500 chars, one question per 5 s per identity, at most 1 open ASK per identity; insert a `USER` message + an `ASK` job |

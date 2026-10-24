@@ -39,29 +39,39 @@ import ArchiveCurrentElementsReducer from "./archive_current_elements_reducer";
 import ClaimJobReducer from "./claim_job_reducer";
 import FailJobReducer from "./fail_job_reducer";
 import IngestObjectReducer from "./ingest_object_reducer";
+import IngestProfileReducer from "./ingest_profile_reducer";
 import LoadReplayScriptReducer from "./load_replay_script_reducer";
 import PauseReplayReducer from "./pause_replay_reducer";
 import PublishCorridorReducer from "./publish_corridor_reducer";
+import PublishDebrisReducer from "./publish_debris_reducer";
 import PublishForecastReducer from "./publish_forecast_reducer";
 import RegisterWorkerReducer from "./register_worker_reducer";
+import RematchProfilesReducer from "./rematch_profiles_reducer";
 import ReportComputeStatusReducer from "./report_compute_status_reducer";
 import ReportFeedStatusReducer from "./report_feed_status_reducer";
+import RequestDebrisReducer from "./request_debris_reducer";
 import RequestForecastReducer from "./request_forecast_reducer";
 import ResetDemoReducer from "./reset_demo_reducer";
 import RevokeWorkerReducer from "./revoke_worker_reducer";
 import SetVerdictReducer from "./set_verdict_reducer";
 import StartReplayReducer from "./start_replay_reducer";
 import SubmitSightingReducer from "./submit_sighting_reducer";
+import UpsertArchetypeReducer from "./upsert_archetype_reducer";
 
 // Import all procedure arg schemas
 import * as PollFeedsNowProcedure from "./poll_feeds_now_procedure";
 
 // Import all table schema definitions
+import ArchetypeRow from "./archetype_table";
 import ComputeJobRow from "./compute_job_table";
 import ComputeRunRow from "./compute_run_table";
 import ComputeStatusRow from "./compute_status_table";
 import CorridorRow from "./corridor_table";
 import CorridorHistoryRow from "./corridor_history_table";
+import DebrisComponentRow from "./debris_component_table";
+import DebrisForecastRow from "./debris_forecast_table";
+import DebrisHistoryRow from "./debris_history_table";
+import DebrisTrackRow from "./debris_track_table";
 import ElementsHistoryRow from "./elements_history_table";
 import FeedStatusRow from "./feed_status_table";
 import ForecastRow from "./forecast_table";
@@ -70,6 +80,7 @@ import MySightingsRow from "./my_sightings_table";
 import ReentryObjectRow from "./reentry_object_table";
 import ReplayStateRow from "./replay_state_table";
 import ReporterStatsRow from "./reporter_stats_table";
+import SatelliteProfileRow from "./satellite_profile_table";
 import SightingRow from "./sighting_table";
 import SpaceWeatherRow from "./space_weather_table";
 
@@ -77,6 +88,17 @@ import SpaceWeatherRow from "./space_weather_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  archetype: __table({
+    name: 'archetype',
+    indexes: [
+      { accessor: 'id', name: 'archetype_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'archetype_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ArchetypeRow),
   computeJob: __table({
     name: 'compute_job',
     indexes: [
@@ -138,6 +160,59 @@ const tablesSchema = __schema({
       { name: 'corridor_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CorridorHistoryRow),
+  debrisComponent: __table({
+    name: 'debris_component',
+    indexes: [
+      { accessor: 'id', name: 'debris_component_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'objectId', name: 'debris_component_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'debris_component_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, DebrisComponentRow),
+  debrisForecast: __table({
+    name: 'debris_forecast',
+    indexes: [
+      { accessor: 'objectId', name: 'debris_forecast_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'debris_forecast_object_id_key', constraint: 'unique', columns: ['objectId'] },
+    ],
+  }, DebrisForecastRow),
+  debrisHistory: __table({
+    name: 'debris_history',
+    indexes: [
+      { accessor: 'id', name: 'debris_history_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'objectId', name: 'debris_history_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'debris_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, DebrisHistoryRow),
+  debrisTrack: __table({
+    name: 'debris_track',
+    indexes: [
+      { accessor: 'id', name: 'debris_track_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'objectId', name: 'debris_track_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'debris_track_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, DebrisTrackRow),
   elementsHistory: __table({
     name: 'elements_history',
     indexes: [
@@ -221,6 +296,17 @@ const tablesSchema = __schema({
       { name: 'reporter_stats_reporter_key_key', constraint: 'unique', columns: ['reporterKey'] },
     ],
   }, ReporterStatsRow),
+  satelliteProfile: __table({
+    name: 'satellite_profile',
+    indexes: [
+      { accessor: 'noradId', name: 'satellite_profile_norad_id_idx_btree', algorithm: 'btree', columns: [
+        'noradId',
+      ] },
+    ],
+    constraints: [
+      { name: 'satellite_profile_norad_id_key', constraint: 'unique', columns: ['noradId'] },
+    ],
+  }, SatelliteProfileRow),
   sighting: __table({
     name: 'sighting',
     indexes: [
@@ -265,19 +351,24 @@ const reducersSchema = __reducers(
   __reducerSchema("claim_job", ClaimJobReducer),
   __reducerSchema("fail_job", FailJobReducer),
   __reducerSchema("ingest_object", IngestObjectReducer),
+  __reducerSchema("ingest_profile", IngestProfileReducer),
   __reducerSchema("load_replay_script", LoadReplayScriptReducer),
   __reducerSchema("pause_replay", PauseReplayReducer),
   __reducerSchema("publish_corridor", PublishCorridorReducer),
+  __reducerSchema("publish_debris", PublishDebrisReducer),
   __reducerSchema("publish_forecast", PublishForecastReducer),
   __reducerSchema("register_worker", RegisterWorkerReducer),
+  __reducerSchema("rematch_profiles", RematchProfilesReducer),
   __reducerSchema("report_compute_status", ReportComputeStatusReducer),
   __reducerSchema("report_feed_status", ReportFeedStatusReducer),
+  __reducerSchema("request_debris", RequestDebrisReducer),
   __reducerSchema("request_forecast", RequestForecastReducer),
   __reducerSchema("reset_demo", ResetDemoReducer),
   __reducerSchema("revoke_worker", RevokeWorkerReducer),
   __reducerSchema("set_verdict", SetVerdictReducer),
   __reducerSchema("start_replay", StartReplayReducer),
   __reducerSchema("submit_sighting", SubmitSightingReducer),
+  __reducerSchema("upsert_archetype", UpsertArchetypeReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
