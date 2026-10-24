@@ -6,7 +6,7 @@
 // Identity: OPERATOR_TOKEN from .env if set, otherwise the token of your
 // `spacetime login` (read from the CLI config at runtime, never copied).
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Timestamp } from 'spacetimedb';
@@ -44,7 +44,8 @@ const HELP = `commands:
   start <event-id> [offset_s] [speed]
   pause
   reset <event-id>               clear DEMO/SIM sightings, history; queue a baseline corridor
-  poll                           fetch NOAA + CelesTrak now`;
+  poll                           fetch NOAA + CelesTrak now
+  export <file>                  write objects + space weather as JSON (test input for gx10-compute)`;
 
 const [cmd, ...args] = process.argv.slice(2);
 if (!cmd || cmd === 'help') {
@@ -103,6 +104,8 @@ async function runCommand(conn: DbConnection, idHex: string): Promise<void> {
       return;
     case 'status':
       return printStatus(conn);
+    case 'export':
+      return exportJson(conn, need(args[0], 'file'));
     default:
       throw new Error(`unknown command ${cmd}\n${HELP}`);
   }
@@ -111,6 +114,29 @@ async function runCommand(conn: DbConnection, idHex: string): Promise<void> {
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`missing ${what}`);
   return v;
+}
+
+function exportJson(conn: DbConnection, file: string): Promise<void> {
+  return new Promise(resolve => {
+    conn
+      .subscriptionBuilder()
+      .onApplied(() => {
+        const objects = [...conn.db.reentryObject.iter()].map(o => ({
+          id: o.id,
+          name: o.name,
+          source: o.source,
+          elements: JSON.parse(o.elements),
+          window_start: o.windowStart?.toDate().toISOString() ?? null,
+          window_end: o.windowEnd?.toDate().toISOString() ?? null,
+        }));
+        const sw = conn.db.spaceWeather.key.find('current');
+        const out = { exported_at: new Date().toISOString(), space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null, objects };
+        writeFileSync(file, JSON.stringify(out, null, 1));
+        console.log(`wrote ${objects.length} objects to ${file}`);
+        resolve();
+      })
+      .subscribe(['SELECT * FROM reentry_object', 'SELECT * FROM space_weather']);
+  });
 }
 
 function printStatus(conn: DbConnection): Promise<void> {
