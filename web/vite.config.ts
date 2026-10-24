@@ -6,6 +6,5 @@ export default defineConfig({
   plugins: [react()],
   envDir: '..',
   server: { port: 5173 },
-  // maplibre-gl 6 loads its worker relative to its own file; pre-bundling breaks that.
-  optimizeDeps: { exclude: ['maplibre-gl'] },
+  worker: { format: 'es' }, // satellite.js 7 ships module workers (top-level await)
 });
