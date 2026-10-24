@@ -61,8 +61,9 @@ function outlineFor(color: Color): Color {
  * landing point is above its horizon (e.g. when the clock is at break-up), else
  * from the predicted break-up point, so a line never cuts through the Earth.
  */
-function lineStart(viewer: Viewer, debris: DebrisResult): (t: JulianDate, ground: Cartesian3) => Cartesian3 {
-  const breakup = Cartesian3.fromDegrees(debris.breakup.lon, debris.breakup.lat, debris.breakup.alt_km * 1000);
+function lineStart(viewer: Viewer, debris: DebrisResult): (t: JulianDate, ground: Cartesian3) => Cartesian3 | undefined {
+  const b = debris.breakup;
+  const breakup = [b?.lat, b?.lon, b?.alt_km].every(Number.isFinite) ? Cartesian3.fromDegrees(b.lon, b.lat, b.alt_km * 1000) : undefined;
   const up = new Cartesian3();
   const toSat = new Cartesian3();
   let lastT: JulianDate | null = null;
@@ -72,11 +73,13 @@ function lineStart(viewer: Viewer, debris: DebrisResult): (t: JulianDate, ground
       lastT = t.clone(lastT ?? undefined); // one SGP4 lookup per frame for all lines
       sat = viewer.entities.getById(`selected-orbit:${debris.id}`)?.position?.getValue(t);
     }
-    if (!sat) return breakup; // SGP4 has no position (already re-entered)
+    if (!sat) return breakup; // SGP4 has no position (already re-entered); undefined = no line
     Ellipsoid.WGS84.geodeticSurfaceNormal(ground, up);
-    return Cartesian3.dot(Cartesian3.subtract(sat, ground, toSat), up) > 0 ? sat : breakup;
+    return Cartesian3.dot(Cartesian3.subtract(sat, ground, toSat), up) > 0 ? sat : breakup; // hidden + no break-up point: no line
   };
 }
+
+const segment = (start: Cartesian3 | undefined, end: Cartesian3): Cartesian3[] => (start ? [start, end] : []);
 
 function addLines(ds: CustomDataSource, viewer: Viewer, debris: DebrisResult, components: DebrisComponent[]): void {
   const from = lineStart(viewer, debris);
@@ -91,7 +94,7 @@ function addLines(ds: CustomDataSource, viewer: Viewer, debris: DebrisResult, co
       new Entity({
         id: `debris-line:${debris.id}:${ci}`,
         polyline: {
-          positions: new CallbackProperty(time => [from(time ?? viewer.clock.currentTime, ground), ground], false),
+          positions: new CallbackProperty(time => segment(from(time ?? viewer.clock.currentTime, ground), ground), false),
           width: width + 2,
           arcType: ArcType.NONE, // straight through space, not along the surface
           material: new PolylineOutlineMaterialProperty({ color: color.withAlpha(alpha), outlineColor: outlineFor(color).withAlpha(alpha * 0.8), outlineWidth: 1 }),
@@ -113,7 +116,7 @@ function addLines(ds: CustomDataSource, viewer: Viewer, debris: DebrisResult, co
       const e = ds.entities.add(
         new Entity({
           id: `debris-line:${debris.id}:${ci}:s${si}`,
-          polyline: { positions: new CallbackProperty(time => [from(time ?? viewer.clock.currentTime, g), g], false), width: 1, arcType: ArcType.NONE, material: color.withAlpha(alpha * 0.25) },
+          polyline: { positions: new CallbackProperty(time => segment(from(time ?? viewer.clock.currentTime, g), g), false), width: 1, arcType: ArcType.NONE, material: color.withAlpha(alpha * 0.25) },
         })
       );
       registerPick(e, { component: c, kind: 'line', mock });
