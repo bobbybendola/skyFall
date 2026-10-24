@@ -12,6 +12,9 @@ Project: SKYFALL (see README.md and docs/ARCHITECTURE.md). Read both before edit
 - If something in docs is marked "check" (unverified), verify against official docs before relying on it, then update the doc.
 - Keep a `docs/TOOL_LOG.md` line when Cursor or Grok does something notable (for the submission write-up).
 
+## Git
+- Branch from fresh `main`, test, open a PR, merge only when tested. Never push to `main` directly. Full workflow and module-publish rules: docs/TEAM_HANDOFF.md section 7.
+
 ## Style
 - TypeScript strict for `spacetimedb/`, `web/`, `services/*-bridge`, `services/feed-poller`.
 - Python 3.11+, type hints, FastAPI for `gx10-compute`.
