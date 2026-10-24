@@ -7,7 +7,7 @@ This is a simplified model on purpose. Public element accuracy is kilometre-scal
 ## 1. Sampling (N variants, default 100,000)
 For each variant draw:
 - mean motion and eccentricity perturbations from the element uncertainty (assumed Gaussian; the scale is a config value, documented)
-- a drag/ballistic-coefficient scale factor, with spread widened by a space-weather index from NOAA
+- a drag/ballistic-coefficient scale factor, with spread widened by a space-weather index (the request's `space_weather.kp` / `f107`, from the module's `space_weather` table)
 - a decay time inside `[window_start, window_end]`
 All on the GPU as tensors.
 
@@ -19,9 +19,10 @@ For each accepted or held sighting `s` (time `t_s`, position `p_s`, optional bea
 - `d_i` = distance from variant `i`'s track position at `t_s` to `p_s`
 - position term: Gaussian in `d_i` with sigma = a report-error scale (config, default a few tens of km)
 - bearing term (if given): Gaussian on the angle between `b_s` and variant `i`'s track direction at `t_s`
-- outlier mixture: `L_i(s) = (1-eps) * gaussian_terms + eps * uniform`, with eps about 0.25 so that bad reports do not collapse the distribution
+- outlier mixture: `L_i(s) = (1-eps_s) * gaussian_terms + eps_s * uniform`, with base eps about 0.25 so that bad reports do not collapse the distribution
+- per-sighting eps from reporter trust (sent by the worker): `eps_s = clamp(eps_base * (1.5 - trust), 0.05, 0.6)`; held sightings may add more
 - weight `w_i` multiplies over sightings; normalise
-Held sightings may use a larger eps than accepted ones.
+- per-sighting score: `p_inlier(s) = sum_i w_i * (1-eps_s) g_i(s) / L_i(s)`. Returned as `scores`; the module uses it to hold inconsistent reports and to update reporter trust
 
 ## 4. Degeneracy control
 Effective sample size `ESS = 1 / sum(w^2)`. If ESS falls below half of N, resample with replacement and add small jitter (so the corridor does not collapse to a few points).
@@ -33,11 +34,12 @@ Effective sample size `ESS = 1 / sum(w^2)`. If ESS falls below half of N, resamp
 - `area_km2_90` = area of the 90% region (use a spherical-area approximation)
 
 ## 6. Output
-`{bands: [{level: 50, polygon}, {level: 90, polygon}], area_km2_90, n_samples, ess, ms}`
+`{bands: [{level: 50, polygon}, {level: 90, polygon}], area_km2_90, n_samples, ess, ms, scores: [{id, p_inlier}]}`
 
 ## Synthetic scoring (tools/sighting-gen)
 - Pick the true variant (the replay event's real path)
-- Generate K sightings along it: position noise, time noise, optional bearing noise; mark about 20 to 30% as outliers (random location/time)
+- Generate K sightings along it: position noise, time noise, optional bearing noise; mark about 20 to 30% as outliers (random location/time). Assign them to several simulated reporters (`sim-<n>`), some reliable, some mostly wrong
+- Output a replay script JSON `[{t_offset_s, lat, lon, bearing_deg?, sim_reporter, is_outlier}]` for `load_replay_script`
 - Run `/update` after each added sighting
 - Record: `area_km2_90` vs K, and whether the true path lies inside the 90% band
 - Repeat over many random seeds; report the shrink curve and the coverage rate

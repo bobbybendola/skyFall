@@ -6,6 +6,7 @@ Source: https://hive.hackberkeley.org/prizes (read Oct 23, 9:55 PM). Re-check be
 ### SpacetimeDB (core)
 Wants Spacetime as the core real-time backend: live shared state, instant sync between users/agents/systems, meaningful use.
 README section: which tables are shared state, what each reducer enforces, what updates live on every screen, how the GX10 worker coordinates through reducers.
+Our pitch: SpacetimeDB is the backend, not a sync layer. It runs the GPU job queue with leases and CPU failover, reporter trust, the replay clock and corridor history, and it fetches NOAA/CelesTrak itself through scheduled procedures. Demo beat: unplug the GX10 and the database hands its work to the CPU worker.
 
 ### SpaceXAI "Make it Legendary" (+ MLH "Build Your Hackathon A-Team")
 Requirements as listed: project built with **Cursor**; must use the **Grok Imagine or Voice API**; bonus for Grok Bot for planning/collaboration. Space/public data theme. MLH A-Team: use Cursor as the core coding agent, integrate Grok Bot in the workflow, describe how in the project description, opt in to the "Make it Legendary" raffle at submission.

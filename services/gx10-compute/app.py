@@ -30,6 +30,8 @@ class ObjectIn(BaseModel):
 
 
 class SightingIn(BaseModel):
+    id: int | None = None
+    trust: float = 0.5  # from reporter_stats via the worker; lowers eps for good reporters
     lat: float
     lon: float
     observed_at: str
@@ -39,6 +41,7 @@ class SightingIn(BaseModel):
 class UpdateIn(BaseModel):
     object: ObjectIn
     sightings: list[SightingIn] = []
+    space_weather: dict | None = None  # {kp, f107}; widens drag spread in phase 2
 
 
 class ClassifyIn(BaseModel):
@@ -139,4 +142,7 @@ def update(body: UpdateIn) -> dict:
     ]
     area = (2 * half_s * track_km_s) * (2 * half_w90)
     ms = int((time.perf_counter() - t0) * 1000)
-    return {"bands": bands, "area_km2_90": area, "n_samples": 0, "ess": 0.0, "ms": ms, "stub": True}
+    # Stub inlier score: constant. Phase 2 returns each sighting's posterior
+    # probability of being an inlier under the outlier mixture.
+    scores = [{"id": s.id, "p_inlier": 0.9} for s in body.sightings if s.id is not None]
+    return {"bands": bands, "area_km2_90": area, "n_samples": 0, "ess": 0.0, "ms": ms, "scores": scores, "stub": True}

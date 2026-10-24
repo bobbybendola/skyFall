@@ -10,7 +10,7 @@
 1. **0:00 to 0:15, problem.** "Once a week something falls out of orbit uncontrolled. The landing time can be off by hours, so airspace gets closed over huge areas." Show the large red corridor.
 2. **0:15 to 0:35, live feeds.** Show the real Space-Track watchlist, element freshness and space weather updating. Press **Replay**.
 3. **0:35 to 1:20, the moment.** Teammates tap sightings; pins appear within about a second and the corridor tightens in visible steps. Submit one bad report (a plane image); show it rejected with a reason.
-4. **1:20 to 1:40, the GX10.** Show variants re-simulated ticking up per sighting. "Every pin re-runs thousands of orbits locally."
+4. **1:20 to 1:40, the GX10 and the database.** Show variants re-simulated ticking up per sighting. "Every pin re-runs thousands of orbits locally." Then unplug the GX10 worker: within about 10 seconds the database expires its lease, the CPU worker picks up, and the corridor keeps updating. "The coordination lives in SpacetimeDB, not in our services."
 5. **1:40 to 2:00, close.** Before and after area (use the real number from the run). State limits: kilometre-accurate public data, simulated sightings, narrowing not pinpointing.
 
 ## What must work, in priority order
@@ -20,14 +20,15 @@
 4. Live feed panel shows real data with timestamps
 
 ## Fallbacks
-- "Auto-fire sightings" button if phones or Wi-Fi fail
+- Start the replay script (`start_replay`): the module itself emits simulated sightings if phones or Wi-Fi fail
 - 60-second recorded video of a good run
 - `USE_GPU=0` mode if the GPU misbehaves (say so honestly)
 - If asked "why not the cloud?": the simulation reruns on every report and the vision queue is continuous; running it locally keeps latency low. Say plainly that the core GPU work is physics simulation plus a vision model, not an LLM.
 
 ## Pre-demo checklist
 - [ ] Run the full script 5 times in a row
-- [ ] Reset button clears demo sightings and corridor
+- [ ] Reset (`reset_demo`) clears DEMO/SIM sightings, jobs, trust and history, and the baseline corridor comes back
+- [ ] Both workers approved; GPU → CPU failover rehearsed
 - [ ] Feeds show recent success times
 - [ ] Screen labels say replay/simulated
 - [ ] Charging, adapters, tabs closed, notifications off

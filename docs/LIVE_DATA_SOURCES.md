@@ -4,6 +4,8 @@ Research notes for `services/feed-poller`. Checked 2026-10-24. "Verified" means 
 
 We do **not** scrape orbitalradar.com and we do not recommend it. It documents no API. We use its upstream sources directly (see DATA_SOURCES.md).
 
+> **Resolved in ARCHITECTURE.md (2026-10-24):** `report_feed_status`, a `space_weather` table and a `CANDIDATE` source/status were adopted. NOAA and CelesTrak are fetched by scheduled procedures inside the module (`noaa_poll`, `celestrak_poll`), not by the poller; the module enforces the CelesTrak 2-hour gap. Space-Track stays in `services/feed-poller`. `status` values: `PREDICTED | DECAYED | REPLAY | CANDIDATE`. The proposals below are kept for the record.
+
 ## TL;DR
 
 | Feed | Endpoint | Auth | Limit / politeness | Poll |
