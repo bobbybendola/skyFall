@@ -1,24 +1,31 @@
 # Data sources
 
-Orbital Radar (orbitalradar.com) is a reference for what a good UI looks like. It documents no API and credits Space-Track, CelesTrak and NOAA SWPC as its sources, so we use those directly. We do not scrape it. If we want its feed, we ask them (no message is sent without the team's go-ahead).
+Official sources and APIs only, no scraping. Orbital Radar (orbitalradar.com) is a UI reference only; we use its upstream sources directly. Endpoints, limits and politeness rules for the orbit feeds: `docs/LIVE_DATA_SOURCES.md`.
 
-Who fetches: NOAA SWPC and CelesTrak are fetched **inside the SpacetimeDB module** by scheduled procedures (`noaa_poll`, `celestrak_poll`). Space-Track is fetched by `services/feed-poller` (login session, strict budget). Details and URLs: `docs/LIVE_DATA_SOURCES.md`.
+Who fetches:
+- NOAA SWPC and CelesTrak: scheduled procedures **inside the SpacetimeDB module**.
+- Space-Track and the large catalog downloads (GCAT, SATCAT, DISCOSweb): `services/feed-poller`, writing through reducers.
 
-| Source | Used for | Real/simulated | Notes (check items marked) |
+| Source | Used for | Status | Notes (**check** = verify before relying on it) |
 |---|---|---|---|
-| Space-Track decay / Tracking and Impact Prediction (TIP) | Watchlist of objects about to re-enter, predicted windows | Real | Needs a free account. Check fields, rate limits and whether entries exist tonight. Poll politely and cache. |
-| CelesTrak GP | Current orbital elements for the watchlist objects | Real | Check the exact JSON query URL on celestrak.org. |
-| NOAA SWPC | Solar and geomagnetic indices; drives the drag-uncertainty scale and a live chip | Real | Public JSON feeds. Check endpoints. |
-| Replay event (`data/replay/`) | The demo re-entry with a known true path | Replay | Frozen elements + true ground track. Labeled REPLAY on screen. |
-| CelesTrak `SPECIAL=DECAYING` | Live candidate objects on the map | Real | `source = CANDIDATE`. No account. |
-| Synthetic sightings (`tools/sighting-gen`) | Demo sightings | Simulated | Noise model in SIM_SPEC.md. Loaded with `load_replay_script`, emitted by the module as `mode = SIM`. Teammate taps are `DEMO`. |
-| Synthetic images (`tools/imagine-gen`) | Test set for the classifier | Synthetic | Generated with Grok Imagine, labeled. |
+| CelesTrak GP `SPECIAL=DECAYING` | Decaying objects + their orbit elements | Real, live (built) | No account. One download per 2 h update |
+| NOAA SWPC Kp, F10.7 | Atmosphere density in the forecast and debris model | Real, live (built) | `10cm-flux.json` is a one-element array |
+| CelesTrak debris groups (e.g. Cosmos 1408, Fengyun-1C, Iridium 33 / Cosmos 2251 debris) | Tracked debris clouds on the globe | Real (planned) | **Check** the exact `GROUP=` names on celestrak.org; same politeness rules |
+| CelesTrak SATCAT | Object type (PAY / R/B / DEB), owner, launch date, radar cross-section size, decay date | Real (planned) | **Check** the CSV/JSON URL and columns. Decay dates support validation |
+| GCAT (J. McDowell, planet4589.org) `satcat.tsv` | Mass, length, diameter, span, shape per object | Real catalog (planned) | Public. Many values are estimates flagged `?`; carry the flag into `confidence`. **Check** the column names in the `#` header |
+| ESA DISCOSweb | Mass, shape, dimensions, cross-section | Real catalog (planned, optional) | Free account + API token. **Check** the auth scheme and rate limits |
+| Space-Track (TIP, decay, GP history) | Official re-entry predictions, actual decay dates, historical elements for validation | Real (planned) | One account, never shared; < 30 req/min, < 300/h |
+| Archetype component lists (`data/archetypes/`) | What each satellite class is made of | **Assumed**, from cited public sources | Every number cites a source or is marked "assumed" |
+| Material properties (`data/materials.json`) | Melting point, heat capacity, heat of fusion | Literature values | **Check** against ESA DRAMA / NASA ORSAT tables |
+| Recovered-debris cases (e.g. 2024 Dragon trunk pieces; Aerospace Corp re-entry database) | Validation | Real, public reports | **Check** the details and sources before quoting |
+| Our own archive (`elements_history`, `forecast_history`) | Replaying a real re-entry from this weekend | Real (recording since Oct 24 ~11:00 PT) | |
+| Synthetic sightings, Grok Imagine images | Old pipeline | Parked / dropped | |
 
 ## Rules
-- Respect each provider's terms and rate limits. Cache responses locally.
-- Raw responses go in `data/raw/` (git-ignored); only small frozen samples needed for the replay are committed.
-- The UI shows each feed's last-success time and any error.
-- Never present replay or simulated data as live.
+- Respect each provider's terms and rate limits; cache; never retry in a loop.
+- Raw downloads go in `data/raw/` (git-ignored); commit only small samples.
+- Every feed shows its last-success time and errors on screen.
+- Catalog values marked as estimates stay marked; modeled outputs are labeled "modeled estimate".
 
-## Accounts to create
-Space-Track (free). No account is needed for NOAA SWPC or CelesTrak. See `docs/SETUP.md`.
+## Accounts
+Space-Track (free; Steven's machine only). DISCOSweb (free, optional). None needed for NOAA, CelesTrak or GCAT. See `docs/SETUP.md`.
