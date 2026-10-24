@@ -11,3 +11,6 @@ spacetime.local.json
 .DS_Store
 data/raw/
 *.token
+
+# Cesium runtime assets, copied by web/scripts/copy-cesium.mjs
+web/public/cesium/

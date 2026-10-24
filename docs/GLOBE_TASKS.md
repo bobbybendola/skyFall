@@ -23,16 +23,23 @@ Branch each of G2–G4 from `feat/globe-3d` once G1 is merged to main (or from t
 
 ---
 
-## G1: globe core (not started; do this first)
+## G1: globe core (stages 1–4 done in PR from `feat/globe-3d`; catalog + TIP layers wait on R3)
 **Data for G1: read `docs/SPACETRACK_NOTES.md`** (the ~31k-object catalog with type and radar size, TIP re-entry markers, rate limits).
 - [ ] Whole-catalog layer: ~31k objects colored by type (payload / rocket body / debris), sized by radar size, with filter toggles; decaying objects highlighted (needs R3's `catalog_object`; until then use `reentry_object`)
 - [ ] TIP markers for objects with an official re-entry prediction (`DECAY_EPOCH ± WINDOW`; the point is 10 km up, not an impact)
-- [ ] Add CesiumJS to `web/` (copy its Workers/Assets/Widgets to `web/public/cesium` with a small script, set `CESIUM_BASE_URL`), offline Natural Earth imagery, no Cesium ion account
-- [ ] `GlobeView`: one Cesium Viewer for the whole app. Exposes the viewer through context (`useViewer()`); timeline + animation widgets on; real-time clock by default
-- [ ] Satellites: every `reentry_object` with orbit elements as a point at its **real altitude** (SGP4 from `orbit.ts`), updated with the Cesium clock (so scrubbing the timeline moves them). Color by forecast re-entry time (soon = red → later = yellow; no forecast = grey); one point collection for speed
-- [ ] Select: click a satellite → `selectedId` in shared state; draw its orbit path for the next ~3 h (with altitude) and a label (name, NORAD, re-entry median)
-- [ ] Mock debris for the selected object, in the exact `/debris` result shape, until `debris_*` tables exist
-- **Done when:** the live objects from the DB move on the 3D globe, clicking one shows its orbit path and label, and the timeline moves everything.
+- [x] Add CesiumJS to `web/` (copy its Workers/Assets/Widgets to `web/public/cesium` with a small script, set `CESIUM_BASE_URL`), offline Natural Earth imagery, no Cesium ion account
+- [x] `GlobeView`: one Cesium Viewer for the whole app. Exposes the viewer through context (`useViewer()`); timeline + animation widgets on; real-time clock by default
+- [x] Satellites: every `reentry_object` with orbit elements as a point at its **real altitude** (SGP4 from `orbit.ts`), updated with the Cesium clock (so scrubbing the timeline moves them). Color by forecast re-entry time (soon = red → later = yellow; no forecast = grey); one point collection for speed
+- [x] Select: click a satellite → `selectedId` in shared state; draw its orbit path for the next ~3 h (with altitude) and a label (name, NORAD, re-entry median)
+- [x] Mock debris for the selected object, in the exact `/debris` result shape, until `debris_*` tables exist
+- **Done when:** the live objects from the DB move on the 3D globe, clicking one shows its orbit path and label, and the timeline moves everything. ✅
+
+**How to plug in (G2–G4):**
+- In `web/src/Globe.tsx` → `Layers`, add one hook call: `useDebrisLines(viewer, debris)` (G2) or `useFallingDebris(viewer, debris)` (G3); G4 renders panels inside `<GlobeView>`.
+- `debris` comes from `useSelectedDebris()` (`web/src/globe/debris.ts`), typed by `web/src/globe/debrisTypes.ts`. It is MOCK today (label it), and becomes live when the debris tables land, without consumer changes.
+- Selection: `useSelected()` / `setSelected()` in `web/src/globe/selection.ts`.
+- Clock: `viewer.clock` (real time; the timeline spans now − 1 h → now + 4 days).
+- Material colors: `MATERIAL_COLOR` in `debrisTypes.ts`.
 
 ## G2: lines to landing points + impact zones (teammate 2)
 - [ ] For the selected satellite: a **line from the satellite to each predicted landing point**, one per component (or per sampled impact).
