@@ -1,6 +1,6 @@
 # Dev plan (Cal Hacks 13.0), after the debris pivot
 
-New teammate? Start with `docs/TEAM_HANDOFF.md`, then `docs/PIVOT.md`.
+New teammate? Start with `docs/TEAM_HANDOFF.md`, then `docs/PIVOT.md`. Visualization ideas: `docs/VIS_NOTES.md`.
 **Deadline: Sunday 9:00 AM PT.** Code freeze 7:30 AM. Times below are PT.
 Rule: don't start polish before the block's checkpoint passes. Every task is a branch → test → PR → main.
 

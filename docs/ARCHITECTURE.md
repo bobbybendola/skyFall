@@ -189,6 +189,7 @@ A chat and voice panel on the globe (Grok, with Grok Voice). It answers only fro
 **Check:** that the xAI chat API supports function calling in the OpenAI-compatible format, the model name, and hackathon credits.
 
 ## 3D globe layers (web `/`, planned; CesiumJS recommended, see PIVOT.md)
+Team ideas for the visualization (select a satellite → lines to predicted landing points, live `debris_piece` tracking, third-person satellite camera): `docs/VIS_NOTES.md`.
 1. **Tracked objects** at their live positions (SGP4 in the browser from `reentry_object.elements`), with altitude; colored by forecast re-entry time; size by RCS/mass.
 2. **Selected object:** orbit path for the next few hours, with the re-entry window marked along it.
 3. **Falling debris:** `debris_track` polylines with altitude, animated on Cesium's clock (time slider); a pulse at each impact.
