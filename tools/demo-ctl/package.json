@@ -1,0 +1,17 @@
+{
+  "name": "skyfall-demo-ctl",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/ctl.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "spacetimedb": "^2.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

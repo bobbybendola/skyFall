@@ -3,7 +3,8 @@
 Project: SKYFALL (see README.md and docs/ARCHITECTURE.md). Read both before editing.
 
 ## Ground rules
-- SpacetimeDB is the ONLY shared state. Clients, the bridge and the poller write through reducers. No side databases, no direct client-to-GX10 calls.
+- SpacetimeDB is the backend, not just storage. It is the ONLY shared state, and any coordination rule (validation, trust, queueing, leases, failover, scheduling, feed politeness) goes in a reducer or procedure, not in a worker or the UI. Clients, workers and the poller write through reducers. No side databases, no direct client-to-GX10 calls.
+- Workers stay stateless: everything they need comes from their subscription, and everything they produce goes through a reducer.
 - `services/gx10-compute` must stay independent of SpacetimeDB (plain HTTP in, JSON out) so it can be tested with curl.
 - Table and reducer names are defined in docs/ARCHITECTURE.md. Do not rename them without updating that file in the same change.
 - Never commit secrets. `.env` is ignored; add new variable names to `.env.example`.

@@ -1,0 +1,18 @@
+{
+  "_note": "PLACEHOLDER replay object for Phase 1. Elements are made up (ISS-like circular orbit), not a real re-entry. Replace with the chosen real past re-entry (see docs/DEV_PLAN.md decisions).",
+  "id": "REPLAY-PLACEHOLDER",
+  "name": "Replay placeholder (simulated)",
+  "norad_id": 0,
+  "source": "REPLAY",
+  "window_start": "2026-10-25T17:00:00Z",
+  "window_end": "2026-10-25T18:00:00Z",
+  "status": "REPLAY",
+  "elements": {
+    "model": "circular-ground-track-stub",
+    "epoch": "2026-10-25T17:00:00Z",
+    "inclination_deg": 51.6,
+    "raan_deg": -140.0,
+    "arg_lat_deg": 0.0,
+    "period_min": 87.8
+  }
+}

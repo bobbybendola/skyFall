@@ -1,0 +1,39 @@
+/* Plain prototype styling. The real design comes later (Claude Design). */
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body { font: 14px/1.4 system-ui, sans-serif; color: #111; background: #fff; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #555; margin: 0 0 4px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+section { border-top: 1px solid #ddd; padding: 8px 0; }
+table { border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+td { padding: 1px 6px 1px 0; font-variant-numeric: tabular-nums; }
+select, input, button { font: inherit; padding: 6px 8px; }
+button { cursor: pointer; }
+.ok { color: #1d7a3a; }
+.bad { color: #b3261e; }
+.muted { color: #777; font-size: 12px; }
+.big { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sim { background: #fff3cd; border: 1px solid #e0b100; padding: 2px 6px; font-size: 12px; font-weight: 600; margin: 4px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { border: 2px solid; border-radius: 10px; padding: 0 6px; font-size: 12px; }
+.pick { background: #f3f3f3; padding: 4px 6px; margin-top: 4px; font-size: 12px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; }
+
+/* Big screen: map + side panel */
+.screen { display: flex; height: 100%; }
+.screen .map { flex: 1; min-width: 0; }
+.panel { width: 380px; overflow-y: auto; padding: 10px 12px; border-left: 1px solid #ccc; }
+
+/* Phone page */
+.phone { padding: 10px 16px; max-width: 600px; margin: 0 auto; }
+.phone .map { height: 55vh; margin: 6px 0; border: 1px solid #ccc; }
+.phone .form { display: flex; flex-direction: column; gap: 6px; }
+.phone .form label { display: flex; flex-direction: column; font-size: 12px; color: #555; }
+.phone button { padding: 12px; font-weight: 600; }
+
+@media (max-width: 800px) {
+  .screen { flex-direction: column; }
+  .screen .map { height: 55vh; flex: none; }
+  .panel { width: auto; border-left: none; }
+}
