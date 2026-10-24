@@ -35,15 +35,18 @@ import {
 
 // Import all reducer arg schemas
 import ApproveWorkerReducer from "./approve_worker_reducer";
+import ArchiveCurrentElementsReducer from "./archive_current_elements_reducer";
 import ClaimJobReducer from "./claim_job_reducer";
 import FailJobReducer from "./fail_job_reducer";
 import IngestObjectReducer from "./ingest_object_reducer";
 import LoadReplayScriptReducer from "./load_replay_script_reducer";
 import PauseReplayReducer from "./pause_replay_reducer";
 import PublishCorridorReducer from "./publish_corridor_reducer";
+import PublishForecastReducer from "./publish_forecast_reducer";
 import RegisterWorkerReducer from "./register_worker_reducer";
 import ReportComputeStatusReducer from "./report_compute_status_reducer";
 import ReportFeedStatusReducer from "./report_feed_status_reducer";
+import RequestForecastReducer from "./request_forecast_reducer";
 import ResetDemoReducer from "./reset_demo_reducer";
 import RevokeWorkerReducer from "./revoke_worker_reducer";
 import SetVerdictReducer from "./set_verdict_reducer";
@@ -55,10 +58,14 @@ import * as PollFeedsNowProcedure from "./poll_feeds_now_procedure";
 
 // Import all table schema definitions
 import ComputeJobRow from "./compute_job_table";
+import ComputeRunRow from "./compute_run_table";
 import ComputeStatusRow from "./compute_status_table";
 import CorridorRow from "./corridor_table";
 import CorridorHistoryRow from "./corridor_history_table";
+import ElementsHistoryRow from "./elements_history_table";
 import FeedStatusRow from "./feed_status_table";
+import ForecastRow from "./forecast_table";
+import ForecastHistoryRow from "./forecast_history_table";
 import MySightingsRow from "./my_sightings_table";
 import ReentryObjectRow from "./reentry_object_table";
 import ReplayStateRow from "./replay_state_table";
@@ -84,6 +91,17 @@ const tablesSchema = __schema({
       { name: 'compute_job_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ComputeJobRow),
+  computeRun: __table({
+    name: 'compute_run',
+    indexes: [
+      { accessor: 'id', name: 'compute_run_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'compute_run_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ComputeRunRow),
   computeStatus: __table({
     name: 'compute_status',
     indexes: [
@@ -120,6 +138,20 @@ const tablesSchema = __schema({
       { name: 'corridor_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CorridorHistoryRow),
+  elementsHistory: __table({
+    name: 'elements_history',
+    indexes: [
+      { accessor: 'id', name: 'elements_history_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'objectId', name: 'elements_history_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'elements_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ElementsHistoryRow),
   feedStatus: __table({
     name: 'feed_status',
     indexes: [
@@ -131,6 +163,31 @@ const tablesSchema = __schema({
       { name: 'feed_status_feed_key', constraint: 'unique', columns: ['feed'] },
     ],
   }, FeedStatusRow),
+  forecast: __table({
+    name: 'forecast',
+    indexes: [
+      { accessor: 'objectId', name: 'forecast_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'forecast_object_id_key', constraint: 'unique', columns: ['objectId'] },
+    ],
+  }, ForecastRow),
+  forecastHistory: __table({
+    name: 'forecast_history',
+    indexes: [
+      { accessor: 'id', name: 'forecast_history_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'objectId', name: 'forecast_history_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'forecast_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ForecastHistoryRow),
   reentryObject: __table({
     name: 'reentry_object',
     indexes: [
@@ -204,15 +261,18 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("approve_worker", ApproveWorkerReducer),
+  __reducerSchema("archive_current_elements", ArchiveCurrentElementsReducer),
   __reducerSchema("claim_job", ClaimJobReducer),
   __reducerSchema("fail_job", FailJobReducer),
   __reducerSchema("ingest_object", IngestObjectReducer),
   __reducerSchema("load_replay_script", LoadReplayScriptReducer),
   __reducerSchema("pause_replay", PauseReplayReducer),
   __reducerSchema("publish_corridor", PublishCorridorReducer),
+  __reducerSchema("publish_forecast", PublishForecastReducer),
   __reducerSchema("register_worker", RegisterWorkerReducer),
   __reducerSchema("report_compute_status", ReportComputeStatusReducer),
   __reducerSchema("report_feed_status", ReportFeedStatusReducer),
+  __reducerSchema("request_forecast", RequestForecastReducer),
   __reducerSchema("reset_demo", ResetDemoReducer),
   __reducerSchema("revoke_worker", RevokeWorkerReducer),
   __reducerSchema("set_verdict", SetVerdictReducer),

@@ -31,6 +31,19 @@ export const ComputeJob = __t.object("ComputeJob", {
 });
 export type ComputeJob = __Infer<typeof ComputeJob>;
 
+export const ComputeRun = __t.object("ComputeRun", {
+  id: __t.u64(),
+  kind: __t.string(),
+  tier: __t.string(),
+  device: __t.string(),
+  objects: __t.u32(),
+  particles: __t.u64(),
+  particleSteps: __t.u64(),
+  ms: __t.u32(),
+  finishedAt: __t.timestamp(),
+});
+export type ComputeRun = __Infer<typeof ComputeRun>;
+
 export const ComputeStatus = __t.object("ComputeStatus", {
   worker: __t.identity(),
   tier: __t.string(),
@@ -68,6 +81,15 @@ export const CorridorHistory = __t.object("CorridorHistory", {
 });
 export type CorridorHistory = __Infer<typeof CorridorHistory>;
 
+export const ElementsHistory = __t.object("ElementsHistory", {
+  id: __t.u64(),
+  objectId: __t.string(),
+  epoch: __t.string(),
+  elements: __t.string(),
+  fetchedAt: __t.timestamp(),
+});
+export type ElementsHistory = __Infer<typeof ElementsHistory>;
+
 export const FeedStatus = __t.object("FeedStatus", {
   feed: __t.string(),
   lastAttemptAt: __t.option(__t.timestamp()),
@@ -76,6 +98,43 @@ export const FeedStatus = __t.object("FeedStatus", {
   rowsIngested: __t.u32(),
 });
 export type FeedStatus = __Infer<typeof FeedStatus>;
+
+export const Forecast = __t.object("Forecast", {
+  objectId: __t.string(),
+  version: __t.u32(),
+  status: __t.string(),
+  tQ05: __t.option(__t.timestamp()),
+  tQ25: __t.option(__t.timestamp()),
+  tQ50: __t.option(__t.timestamp()),
+  tQ75: __t.option(__t.timestamp()),
+  tQ95: __t.option(__t.timestamp()),
+  decayedFrac: __t.f64(),
+  horizonDays: __t.f64(),
+  nSamples: __t.u32(),
+  ess: __t.f64(),
+  calibrated: __t.bool(),
+  bcM2Kg: __t.f64(),
+  areaKm290: __t.f64(),
+  tier: __t.string(),
+  device: __t.string(),
+  computedAt: __t.timestamp(),
+  note: __t.string(),
+});
+export type Forecast = __Infer<typeof Forecast>;
+
+export const ForecastHistory = __t.object("ForecastHistory", {
+  id: __t.u64(),
+  objectId: __t.string(),
+  version: __t.u32(),
+  tQ05: __t.option(__t.timestamp()),
+  tQ50: __t.option(__t.timestamp()),
+  tQ95: __t.option(__t.timestamp()),
+  decayedFrac: __t.f64(),
+  nSamples: __t.u32(),
+  tier: __t.string(),
+  computedAt: __t.timestamp(),
+});
+export type ForecastHistory = __Infer<typeof ForecastHistory>;
 
 export const MySightings = __t.object("MySightings", {});
 export type MySightings = __Infer<typeof MySightings>;

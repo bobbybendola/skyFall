@@ -23,7 +23,8 @@ const DB = process.env.SPACETIMEDB_MODULE || 'skyfall-calhacks';
 const COMPUTE = (process.env.COMPUTE_URL || 'http://localhost:8000').replace(/\/$/, '');
 const HEARTBEAT_MS = 3000;
 const CLAIM_POLL_MS = 300;
-const COMPUTE_TIMEOUT_MS = 8000; // the module's lease is 10 s
+const FAST_TIMEOUT_MS = 55_000; // module fast-lane lease is 60 s
+const BULK_TIMEOUT_MS = 14 * 60_000; // module bulk-lane lease is 15 min
 
 // One identity per machine and tier, kept across restarts (*.token is git-ignored).
 const tokenFile = join(here, '..', `.${TIER}.token`);
@@ -35,7 +36,9 @@ let me: Identity;
 let approved = false;
 let healthy = false;
 let gpuName = TIER === 'cpu' ? 'cpu' : 'unknown';
-let busy: bigint | null = null; // job id being processed
+// Two lanes, mirroring the module: one bulk job (FORECAST) and one fast job.
+const busy: Record<'fast' | 'bulk', bigint | null> = { fast: null, bulk: null };
+const laneOf = (kind: string): 'fast' | 'bulk' => (kind === 'FORECAST' ? 'bulk' : 'fast');
 let lastNote = '';
 
 function log(msg: string): void {
@@ -47,12 +50,12 @@ function note(msg: string): void {
 }
 const iso = (ts: Timestamp) => ts.toDate().toISOString();
 
-async function post(path: string, body: unknown): Promise<any> {
+async function post(path: string, body: unknown, timeoutMs = FAST_TIMEOUT_MS): Promise<any> {
   const r = await fetch(`${COMPUTE}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(COMPUTE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!r.ok) throw new Error(`compute ${path} HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.json();
@@ -91,11 +94,13 @@ function gpuWorkerHealthy(): boolean {
 }
 
 async function maybeClaim(): Promise<void> {
-  if (busy !== null || !approved || !healthy) return;
+  if (!approved || !healthy) return;
   // Shortcut only: the module enforces the same rule in claim_job.
   if (TIER === 'cpu' && gpuWorkerHealthy()) return;
   let queued = false;
-  for (const j of conn.db.computeJob.iter()) if (j.status === 'QUEUED') queued = true;
+  for (const j of conn.db.computeJob.iter()) {
+    if (j.status === 'QUEUED' && busy[laneOf(j.kind)] === null) queued = true;
+  }
   if (!queued) return;
   try {
     await conn.reducers.claimJob({});
@@ -105,11 +110,9 @@ async function maybeClaim(): Promise<void> {
 }
 
 function checkForMyJob(): void {
-  if (busy !== null) return;
   for (const j of conn.db.computeJob.iter()) {
-    if (j.status === 'CLAIMED' && j.claimedBy && j.claimedBy.isEqual(me)) {
+    if (j.status === 'CLAIMED' && j.claimedBy && j.claimedBy.isEqual(me) && busy[laneOf(j.kind)] === null) {
       void run(j);
-      return;
     }
   }
 }
@@ -119,11 +122,13 @@ function checkForMyJob(): void {
 type Job = { id: bigint; kind: string; objectId: string; sightingId?: bigint; attempts: number };
 
 async function run(job: Job): Promise<void> {
-  busy = job.id;
+  const lane = laneOf(job.kind);
+  busy[lane] = job.id;
   const t0 = performance.now();
   try {
     if (job.kind === 'CLASSIFY') await runClassify(job);
     else if (job.kind === 'UPDATE') await runUpdate(job, t0);
+    else if (job.kind === 'FORECAST') await runForecast(job, t0);
     else throw new Error(`unknown job kind ${job.kind}`);
     log(`job ${job.id} ${job.kind} ${job.objectId} done in ${Math.round(performance.now() - t0)} ms`);
   } catch (e) {
@@ -134,7 +139,7 @@ async function run(job: Job): Promise<void> {
       log(`fail_job refused (lease probably expired): ${String(e2).slice(0, 120)}`);
     }
   } finally {
-    busy = null;
+    busy[lane] = null;
     setImmediate(() => void maybeClaim());
   }
 }
@@ -155,10 +160,39 @@ function trustOf(reporterKey: string): number {
   return (r.agreed + r.accepted + 1) / (r.agreed + r.disagreed + r.accepted + r.rejected + 2);
 }
 
+const isGp = (el: any) => el && typeof el === 'object' && 'MEAN_MOTION' in el && 'EPOCH' in el;
+
+// All objects with real orbit elements, forecast in one GPU batch.
+async function runForecast(job: Job, t0: number): Promise<void> {
+  const objects = [...conn.db.reentryObject.iter()]
+    .map(o => ({ id: o.id, elements: JSON.parse(o.elements) }))
+    .filter(o => isGp(o.elements));
+  if (objects.length === 0) throw new Error('no objects with orbit elements');
+  const sw = conn.db.spaceWeather.key.find('current');
+  log(`forecast: ${objects.length} objects on ${gpuName}...`);
+  const out = await post(
+    '/forecast',
+    { objects, space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null },
+    BULK_TIMEOUT_MS
+  );
+  await conn.reducers.publishForecast({
+    jobId: job.id,
+    results: JSON.stringify(out.results),
+    jobMs: Math.round(performance.now() - t0),
+    particleSteps: BigInt(Math.round(Number(out.particle_steps) || 0)),
+    nPerObject: Number(out.n_per_object) || 0,
+    device: String(out.device ?? gpuName),
+  });
+  const ok = out.results.filter((r: any) => r.status === 'ok').length;
+  log(`forecast: ${ok}/${objects.length} ok, ${(Number(out.particle_steps) / 1e9).toFixed(2)}e9 particle-steps on ${out.device}`);
+}
+
 async function runUpdate(job: Job, t0: number): Promise<void> {
   const obj = conn.db.reentryObject.id.find(job.objectId);
   if (!obj) throw new Error(`object ${job.objectId} not in subscription`);
-  if (!obj.windowStart || !obj.windowEnd) throw new Error('object has no re-entry window');
+  const elements = JSON.parse(obj.elements);
+  const gp = isGp(elements);
+  if (!gp && (!obj.windowStart || !obj.windowEnd)) throw new Error('object has no re-entry window');
   const sightings = [...conn.db.sighting.iter()]
     .filter(s => s.objectId === job.objectId && (s.verdict === 'ACCEPTED' || s.verdict === 'HELD'))
     .map(s => ({
@@ -171,10 +205,16 @@ async function runUpdate(job: Job, t0: number): Promise<void> {
     }));
   const sw = conn.db.spaceWeather.key.find('current');
   const out = await post('/update', {
-    object: { elements: JSON.parse(obj.elements), window_start: iso(obj.windowStart), window_end: iso(obj.windowEnd) },
+    object: {
+      id: obj.id,
+      elements,
+      window_start: obj.windowStart ? iso(obj.windowStart) : null,
+      window_end: obj.windowEnd ? iso(obj.windowEnd) : null,
+    },
     sightings,
     space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null,
   });
+  if (gp && (!out.bands || out.bands.length === 0)) throw new Error('no re-entry inside the horizon for this object');
   await conn.reducers.publishCorridor({
     jobId: job.id,
     bands: JSON.stringify(out.bands),

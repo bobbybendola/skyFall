@@ -45,6 +45,8 @@ const HELP = `commands:
   pause
   reset <event-id>               clear DEMO/SIM sightings, history; queue a baseline corridor
   poll                           fetch NOAA + CelesTrak now
+  forecast                       queue a GPU forecast for all objects now
+  archive                        archive current elements of every object (one-off backfill)
   export <file>                  write objects + space weather as JSON (test input for gx10-compute)`;
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -99,6 +101,10 @@ async function runCommand(conn: DbConnection, idHex: string): Promise<void> {
       return r.pauseReplay({});
     case 'reset':
       return r.resetDemo({ objectId: need(args[0], 'event id') });
+    case 'archive':
+      return r.archiveCurrentElements({});
+    case 'forecast':
+      return r.requestForecast({});
     case 'poll':
       await conn.procedures.pollFeedsNow({});
       return;

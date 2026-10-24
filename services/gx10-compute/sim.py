@@ -350,7 +350,7 @@ def calibrate_bc(
 # ------------------------------------------------------------------ corridor extraction
 
 
-def corridor_bands(lat: np.ndarray, lon: np.ndarray, w: np.ndarray, cell: float = 1.0, max_polys: int = 40):
+def corridor_bands(lat: np.ndarray, lon: np.ndarray, w: np.ndarray, cell: float = 1.0, max_polys: int = 15):
     """Highest-density regions holding 50% and 90% of the weight, as polygons."""
     from scipy.ndimage import gaussian_filter
     from skimage.measure import approximate_polygon, find_contours
