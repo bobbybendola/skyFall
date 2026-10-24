@@ -20,6 +20,7 @@ import {
 } from 'cesium';
 import { sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
+import type { DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
 
 const PATH_HOURS = 3;
@@ -103,7 +104,17 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
 }
 
 /** Small info card for the selected object (G4 will replace this with the real panel). */
-export function SelectedCard({ viewer, objects, reentry }: { viewer: Viewer | null; objects: TrackedObject[]; reentry: ReentryLookup }) {
+export function SelectedCard({
+  viewer,
+  objects,
+  reentry,
+  debris,
+}: {
+  viewer: Viewer | null;
+  objects: TrackedObject[];
+  reentry: ReentryLookup;
+  debris?: DebrisResult | null;
+}) {
   const selected = useSelected();
   const obj = objects.find(o => o.id === selected);
   if (!obj || !viewer) return null;
@@ -132,6 +143,12 @@ export function SelectedCard({ viewer, objects, reentry }: { viewer: Viewer | nu
         </div>
       ) : (
         <div className="muted">no re-entry forecast inside the horizon</div>
+      )}
+      {debris && (
+        <div>
+          {debris.source === 'mock' && <span className="mock">MOCK</span>} debris: {Math.round(debris.p_any_survives * 100)}% chance any piece survives ·{' '}
+          {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
+        </div>
       )}
       <button onClick={flyTo}>Fly to</button> <button onClick={() => setSelected(null)}>Clear</button>
     </div>
