@@ -1,5 +1,7 @@
 # Dev plan (Cal Hacks 13.0)
 
+New teammate? Start with `docs/TEAM_HANDOFF.md` (context, git workflow, open tasks).
+
 Deadline: Sunday 9:00 AM. Roughly 32 hours from Saturday 12:45 AM. Hour marks below are "hours from start".
 Rule: do not start a phase's polish until the previous checkpoint passes.
 

@@ -25,13 +25,18 @@ Use Mana meaningfully while building; link public Mana pages/chats in the submis
 ### Watch: Annapurna Labs (coming soon)
 AWS's chip team. No criteria yet; check the booth. Relevant to the GX10/hardware angle.
 
+### MLH extras (planned)
+- **Best .Tech Domain Name** (free .tech for up to 10 years): register the project domain and point it at the site.
+- **Best Use of Vultr** (free credits): a Vultr server hosts the web build and runs the degraded CPU backup worker + compute (`USE_GPU=0`). Real role: keeps SKYFALL alive, visibly degraded, when the GX10 is offline.
+- Not both domain prizes: skip GoDaddy Registry. Not both clouds: skip DigitalOcean.
+
 ## Optional, only if genuinely central
 - **Bright Data / Apify:** both require real essential web data and Bright Data disqualifies mocked demo data. Default: skip.
 - **Microsoft "Built for the Real World":** needs a production-minded agent and a named customer; skip unless the team commits to a customer.
 - **MLH Commit Fellowship:** opt in at submission if the team wants to continue the project.
 
 ## Avoid
-Convex (competes with SpacetimeDB), Tiger Data, MongoDB, Snowflake, Vultr, DigitalOcean, Bitdeer (dilute the GX10 story); Cartesia/ElevenLabs/Moss unless voice becomes core.
+Convex (competes with SpacetimeDB), Tiger Data, MongoDB, Snowflake, DigitalOcean, Bitdeer (dilute the GX10 story; Vultr is used only as the degraded backup); Cartesia/ElevenLabs/Moss unless voice becomes core.
 
 ## Submission checklist
 - [ ] README states real vs simulated
