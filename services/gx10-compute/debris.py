@@ -639,6 +639,34 @@ def footprint_center(lat: np.ndarray, lon: np.ndarray) -> list[float] | None:
     return [round(c, 4), round(float(np.median(lat)), 4)]
 
 
+HAZARD_CELL_DEG = 1.0  # ~110 km cells for the warning-level grid
+
+
+def hazard_grid(lat: np.ndarray, lon: np.ndarray, hazard: np.ndarray, cell_deg: float = HAZARD_CELL_DEG, max_cells: int = 5000) -> dict:
+    """Per ground cell, the share of runs in which at least one dangerous (>= 15 J) piece
+    lands there. lat/lon/hazard are (runs, pieces). Cells are [lat_south, lon_west, runs]
+    on a fixed cell_deg grid; p = runs / n_runs. The smallest non-zero p is 1/n_runs.
+    Keeps the max_cells highest-p cells (a far-off re-entry spreads over most of the
+    orbit's latitude band); 'truncated' says whether any were dropped.
+    """
+    P = lat.shape[0]
+    run, piece = np.nonzero(hazard)
+    if len(run) == 0:
+        return {'cell_deg': cell_deg, 'n_runs': P, 'cells': [], 'truncated': False}
+    i = np.floor((lat[run, piece] + 90) / cell_deg).astype(np.int64)
+    j = np.floor((((lon[run, piece] + 180) % 360) / cell_deg)).astype(np.int64)
+    n_j = int(round(360 / cell_deg))
+    cell = i * n_j + j
+    pairs = np.unique(cell * P + run)  # one count per (cell, run)
+    cells, runs = np.unique(pairs // P, return_counts=True)
+    truncated = len(cells) > max_cells
+    if truncated:
+        keep = np.argsort(-runs, kind='stable')[:max_cells]
+        cells, runs = cells[keep], runs[keep]
+    out = [[round(float(c // n_j * cell_deg - 90), 3), round(float(c % n_j * cell_deg - 180), 3), int(r)] for c, r in zip(cells, runs)]
+    return {'cell_deg': cell_deg, 'n_runs': P, 'cells': out, 'truncated': bool(truncated)}
+
+
 def impact_samples(lat: np.ndarray, lon: np.ndarray, n_max: int = 40) -> list[list[float]]:
     """Up to n_max sampled [lon, lat] impact points (for per-impact lines on the globe)."""
     idx = np.linspace(0, len(lat) - 1, min(n_max, len(lat))).astype(int) if len(lat) else []
@@ -788,6 +816,7 @@ def run_debris(
             'pieces_mean': round(float(n_hazard.mean()), 3),
             'pieces_p95': round(float(np.percentile(n_hazard, 95)), 3),
         },
+        'hazard_grid': hazard_grid(lat, lon, hazard),
         'surviving_mass_frac': round(float(surv_mass.mean()) / total_mass, 4) if total_mass > 0 else 0.0,
         'surviving_mass_kg': {'mean': round(float(surv_mass.mean()), 3), 'p95': round(float(np.percentile(surv_mass, 95)), 3)},
         'casualty_area_m2': {'mean': round(float(a_c.sum(1).mean()), 3)},
