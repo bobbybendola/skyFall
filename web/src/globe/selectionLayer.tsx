@@ -53,6 +53,21 @@ function positionAt(o: TrackedObject, when: Date): Cartesian3 | undefined {
   return p ? Cartesian3.fromDegrees(p.lon, p.lat, p.altKm * 1000) : undefined;
 }
 
+const scratchJulian = new JulianDate();
+
+/** Position at a Cesium time with sub-millisecond precision. A Date only holds whole
+ * milliseconds, and Cesium's camera tracking compares positions 1 ms apart to find
+ * the direction of travel: without this it sometimes sees no movement and flips the
+ * camera frame every other frame (visible as flicker in real-time "Today" mode). */
+function positionAtTime(o: TrackedObject, t: JulianDate): Cartesian3 | undefined {
+  const d = JulianDate.toDate(t);
+  const a = positionAt(o, d);
+  const fracMs = JulianDate.secondsDifference(t, JulianDate.fromDate(d, scratchJulian)) * 1000;
+  if (!a || Math.abs(fracMs) < 1e-6) return a;
+  const b = positionAt(o, new Date(d.getTime() + Math.sign(fracMs)));
+  return b ? Cartesian3.lerp(a, b, Math.abs(fracMs), new Cartesian3()) : a;
+}
+
 function pathFrom(o: TrackedObject, start: Date): Cartesian3[] {
   const out: Cartesian3[] = [];
   for (let s = 0; s <= PATH_HOURS * 3600; s += PATH_STEP_S) {
@@ -110,7 +125,7 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
     const track = viewer.entities.add(
       new Entity({
         id: trackId(obj.id),
-        position: new CallbackPositionProperty(time => positionAt(obj, JulianDate.toDate(time ?? viewer.clock.currentTime)), false),
+        position: new CallbackPositionProperty(time => positionAtTime(obj, time ?? viewer.clock.currentTime), false),
         viewFrom: new ConstantProperty(new Cartesian3(0, -2_000_000, 1_500_000)),
         label: {
           text: `${obj.name} (${obj.noradId})`,
