@@ -11,7 +11,7 @@
 3. **0:40–1:15, the moment: debris.** Press play on the clock. The object breaks up at ~78 km and pieces stream down in 3D: structure and panels burn up, the steel reaction wheels and titanium tank survive. Impact zones light up, colored by material. Breakdown panel: "18% chance any piece survives; ~3 kg; impact energy of a falling brick." Click "why": archetype, sources, "modeled estimate".
 4. **1:15–1:35, validation.** "Last night <object> came down. Here's what we predicted 12 hours before, and the official decay time." (Real numbers only; if it was off, say by how much.)
 5. **1:35–1:50, GX10 + SpacetimeDB.** Unplug the GX10 worker: within ~10 s the database hands the job to the CPU backup and the red "degraded" banner appears, with fewer samples and wide zones. "The GPU is what makes this precise; the database is what keeps it alive."
-6. **1:50–2:00, close + Grok.** Ask by voice: "Is anything coming down near Berkeley this week, and does any of it survive?" Grok answers from our tables. Close with the limits: public data, generic archetypes, probabilities not pinpoints.
+6. **1:50–2:00, close + Grok.** Open **Ask Grok** (text; voice is not in this build) and ask "What's coming down in the next 24 hours?" Grok answers from the tables. If the button says "assistant offline", skip the line. Close with the limits: public data, generic archetypes, probabilities not pinpoints.
 
 ## Must work, in priority order
 1. Live objects on the globe with forecasts

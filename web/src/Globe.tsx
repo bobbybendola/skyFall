@@ -13,6 +13,7 @@ import { SatModelPanel } from './globe/SatModelPanel.tsx';
 import { useDetailedMap } from './globe/mapLayers.ts';
 import { MapControls } from './globe/mapControls.tsx';
 import { useOrbitControls } from './globe/orbitControls.ts';
+import { AssistantPanel } from './globe/assistant.tsx';
 
 function Layers() {
   const viewer = useViewer();
@@ -48,6 +49,9 @@ export function Globe() {
         <b>SKYFALL</b>
         <span className={conn.isActive ? 'ok' : 'bad'}>{conn.isActive ? ' live' : ' connecting…'}</span>
         <a href="/2d">2D prototype</a>
+        {/* In the title bar, not the top-right. That corner is the model panel
+            now, and the right column once panels stack (PR #38). */}
+        <AssistantPanel />
       </div>
     </GlobeView>
   );

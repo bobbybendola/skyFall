@@ -25,8 +25,8 @@ SpacetimeDB is not a cache or a message pipe here. The module in `spacetimedb/` 
 Outside the module, only these run, and none hold state:
 - **gx10-worker** (`services/gx10-bridge`): claims jobs, calls compute on localhost, writes results. A live FORECAST skips `REPLAY` objects. A FORECAST whose `object_id` is one replay id calls `/forecast` with `as_of`. A second copy with `WORKER_TIER=cpu` is the fallback (Vultr).
 - **gx10-compute**: pure HTTP physics (`/forecast`, `/debris`, `/fragment`). Never talks to SpacetimeDB.
-- **feed-poller** (`services/feed-poller`): Space-Track (login and request budget), plus large catalog downloads too big for a procedure (GCAT, SATCAT). Writes through reducers.
-- **assistant worker** (`services/assistant`, planned): claims `ASK` jobs, answers with Grok from its subscription. Holds the xAI key.
+- **feed-poller** (`services/feed-poller`, planned, not in the repo): Space-Track (login and request budget), plus large catalog downloads too big for a procedure (GCAT, SATCAT). Would write through reducers.
+- **assistant** (`services/assistant`): read-only HTTP. Holds the xAI key. Reads public tables with SQL on each question and does not claim jobs. The ASK-job worker below is still planned.
 
 Rules:
 - Only SpacetimeDB holds shared state. No side databases, no direct client-to-GX10 calls, no screen talks to a feed.
@@ -39,7 +39,7 @@ Rules:
  NOAA SWPC ──HTTP──┐        ┌──────────────────── SpacetimeDB module (maincloud) ─────────────────────┐
  CelesTrak ──HTTP──┼───────►│ noaa_poll / celestrak_poll ─► reentry_object, space_weather, feed_status │
  Space-Track, GCAT,│        │ elements_history (archive)            satellite_profile ◄─ ingest_profile │
- SATCAT ─► feed-poller ────►│                                       archetype ◄──────── upsert_archetype│
+ SATCAT ─► feed-poller (planned) ►│                                       archetype ◄──────── upsert_archetype│
                             │ sweep (2 s): leases, failover, queue FORECAST every 20 min               │
                             │ compute_job: FORECAST ─► publish_forecast ─► forecast (+history)          │
                             │                 └─ objects re-entering < 72 h ─► DEBRIS jobs              │
@@ -192,8 +192,11 @@ Target: tap to visible change in about 2 seconds. New sightings arriving while a
 - `POST /update` → body `{object: {id, elements, window_start?, window_end?}, sightings: [{id, lat, lon, observed_at, bearing_deg?, trust}], space_weather?: {kp, f107}}` → `{bands: [{level, polygon}], area_km2_90, n_samples, ess, ms, scores: [{id, p_inlier}]}`
 Polygons are GeoJSON-style `[lon, lat]` rings, simplified to at most a few hundred points before leaving compute. `trust` = `(agreed + accepted + 1) / (agreed + disagreed + accepted + rejected + 2)` from `reporter_stats`; compute lowers a sighting's outlier rate as trust rises (see SIM_SPEC.md).
 
-## Assistant (planned): "what's coming down, and does any of it survive?"
-A chat and voice panel on the globe (Grok, with Grok Voice). It answers only from our tables: what's coming down soon, near a place, which pieces of an object are predicted to survive and why (material, mass, demise altitude), how sure we are, and where the numbers come from. It never states a landing point as certain.
+## Assistant: "what's coming down, and does any of it survive?"
+
+**Demo path (shipped).** `services/assistant` is a stateless HTTP service on `127.0.0.1:8787` (`GET /health`, `POST /ask`). Each question runs fixed SQL against the public tables (`reentry_object`, `forecast`, `debris_forecast`, `debris_component`, `satellite_profile`, `space_weather`) and calls xAI chat completions at `https://api.x.ai/v1/chat/completions` (`XAI_API_KEY`, default model `grok-4.7`, no tools). Do not send `search_parameters`: on 2026-10-25 that field returned HTTP 410, live search deprecated. The "next 24 hours" list is computed in the service from forecast medians. The globe's Ask Grok panel calls it through the Vite proxy. No key, or the process down: the button says "assistant offline" and the globe still works. The key is not in the browser. Voice is not wired. This path does not write tables.
+
+**ASK jobs (still planned).** A chat and voice panel on the globe (Grok Voice). It answers only from our tables: what's coming down soon, near a place, which pieces of an object are predicted to survive and why (material, mass, demise altitude), how sure we are, and where the numbers come from. It never states a landing point as certain. The flow below is not built.
 
 **Flow.** Phone or screen → `ask_assistant` → the module stores the question and queues an `ASK` job → the assistant worker claims it → calls Grok with the question, the user's location (if shared) and the lookup tools below → each tool call is answered from the worker's SpacetimeDB subscription (or a fixed file) → `post_answer` → the reply appears live through `my_assistant_messages`.
 
@@ -240,4 +243,4 @@ Performance: one entity per object (hundreds), tracks only for the selected obje
 - Feed errors: written to `feed_status` and shown, never hidden. CelesTrak errors wait for the next 2-hour cycle.
 - Worker restart: it re-subscribes; anything it held comes back through lease expiry.
 - Debris job fails (bad profile, no archetype match): `fail_job` with the reason; the object falls back to the "generic" archetype on the next try and is marked low confidence.
-- Assistant down or xAI failing: questions stay queued; after 3 failed attempts the user gets "Couldn't answer right now". The map and corridor are unaffected.
+- Assistant down or xAI failing: the globe stays up. The panel says "assistant offline" when the process or key is missing, and shows a short error in the chat when a question fails. The planned ASK-job text ("Couldn't answer right now" after 3 attempts) is not built.

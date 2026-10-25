@@ -195,6 +195,7 @@ The GPU is what makes it practical to run tens of thousands of futures for every
 - **Debris layers:** falling-piece tracks, impact zones by component, warning levels on a ground grid, and a filter for pieces that survive at least 10% of the time.
 - **3D model viewer** (three.js, loaded on demand): the archetype as an interactive schematic. Hover or click a part to isolate its debris on the globe.
 - **Camera:** pivots around Earth's centre, the ground point, or the selected satellite, and keeps spinning after a flick, easing to a stop.
+- **Ask Grok** in the title bar. It answers from the live tables (re-entry windows, debris survival, landing area). Debris figures are modeled estimates. If the assistant process or `XAI_API_KEY` is missing, the button says "assistant offline" and the globe still works.
 
 ---
 
@@ -215,8 +216,10 @@ The GPU is what makes it practical to run tens of thousands of futures for every
 ## How we built it: Cursor and Grok
 
 - **Cursor** was a core coding agent. Its background agents opened branches directly against the repo (for example `cursor/bench-forecast-vs-grok-*`, which fixed the forecast result fields and added [`bench_forecast.py`](services/gx10-compute/bench_forecast.py) to time the forecast engine on the GX10).
-- **Grok** (Grok 4.7 inside Cursor) built the forecast validation in the SpacetimeDB module: `reentry_outcome`, the SATCAT decay fetch, `forecast_score`, and the historical replay loader. It also kept the Space-Track path disabled when no credentials are present. Log: [docs/TOOL_LOG.md](docs/TOOL_LOG.md).
-- **Planned:** a Grok assistant inside the app, answering questions like "what's coming down near me, and does any of it survive?" from the live tables. The reducers and table are specified (`ask_assistant`, `post_answer`, `assistant_message`, with the ASK job kind in the same queue), but it is not built yet.
+- **Grok** (Grok 4.7 inside Cursor) built the forecast validation in the SpacetimeDB module: `reentry_outcome`, the SATCAT decay fetch, `forecast_score`, and the historical replay loader. It also kept the Space-Track path disabled when no credentials are present. That work is [PR #23](https://github.com/bobbybendola/skyFall/pull/23) (merged as `6bed3fc`, co-authored by Cursor Agent, Christopher-Chhim, and Steven Kuzhipala), tested on a local throwaway database only. The forecast field fix and [`bench_forecast.py`](services/gx10-compute/bench_forecast.py) are [PR #14](https://github.com/bobbybendola/skyFall/pull/14). Log: [docs/TOOL_LOG.md](docs/TOOL_LOG.md).
+- **Grok in the product.** [PR #36](https://github.com/bobbybendola/skyFall/pull/36) adds `services/assistant`: read-only SQL against the live tables, then xAI chat completions with no tools attached (`search_parameters` is omitted; sending it returned HTTP 410). The ASK-job reducers (`ask_assistant`, `post_answer`, `assistant_message`) are still specified and not built. Voice is not wired.
+- **Grok Bot** (an agent the team named Nori) matched SKYFALL against the Cal Hacks prize list and picked target tracks; set up teammate agents **SKYFALL Deploy** (Vultr and a GoDaddy domain, with a deploy log and spend guardrails) and **DB** (the SpacetimeDB backend, with publishing and deletion guardrails); designed the hindcast (frozen inputs at T-72h through T-6h, validation tables, a scorecard and replay); generated UI mockups of the dashboard and the upgraded globe; reviewed the repo and wrote a ranked plan for the last hours; and launched Cursor cloud agents for the final demo work (this assistant, and the live-debris / failover-banner work).
+- **TODO:** confirm whether the SpaceXAI prize page still requires Grok Imagine or Voice (`docs/SPONSORS.md` says it does). The T-72h..T-6h ladder is not a scheduled job; scoring uses `forecast_score` and replay `as_of`. Git does not attribute implementation commits to Claude, so the team still needs to say which parts Claude wrote.
 
 ---
 
@@ -255,6 +258,9 @@ npm start -- status
 
 # 5. Globe
 cd web && npm ci && npm run dev
+
+# 6. Assistant (optional). Without it, or without XAI_API_KEY, the globe says "assistant offline".
+cd services/assistant && npm ci && npm start   # http://127.0.0.1:8787 ; the dev server proxies /api/assistant
 ```
 
 Details, accounts and environment variables: [docs/SETUP.md](docs/SETUP.md), [docs/GX10_SETUP.md](docs/GX10_SETUP.md), [`.env.example`](.env.example).
@@ -266,6 +272,8 @@ Details, accounts and environment variables: [docs/SETUP.md](docs/SETUP.md), [do
 | `spacetimedb/` | The backend: tables, reducers, scheduled procedures |
 | `services/gx10-compute/` | GPU physics: `sim.py` (forecast), `debris.py` (break-up and survival), `app.py` (`/forecast`, `/debris`), tests |
 | `services/gx10-bridge/` | Stateless worker (`WORKER_TIER=gpu\|cpu`) |
+| `services/assistant/` | Optional Grok chat over the live tables (read-only HTTP). The xAI key stays here. |
+| `services/feed-poller/` | Planned (Space-Track and large catalogs). Not in the repo. |
 | `web/` | 3D globe |
 | `tools/demo-ctl/` | Operator console: approve workers, seed archetypes, queue jobs, load replay cases |
 | `data/archetypes/`, `data/materials.json` | Component and material assumptions, with sources |
