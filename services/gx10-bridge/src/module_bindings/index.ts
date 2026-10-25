@@ -40,6 +40,7 @@ import ClaimJobReducer from "./claim_job_reducer";
 import FailJobReducer from "./fail_job_reducer";
 import IngestObjectReducer from "./ingest_object_reducer";
 import IngestProfileReducer from "./ingest_profile_reducer";
+import LoadReplayCaseReducer from "./load_replay_case_reducer";
 import LoadReplayScriptReducer from "./load_replay_script_reducer";
 import PauseReplayReducer from "./pause_replay_reducer";
 import PublishCorridorReducer from "./publish_corridor_reducer";
@@ -57,6 +58,7 @@ import SetVerdictReducer from "./set_verdict_reducer";
 import StartReplayReducer from "./start_replay_reducer";
 import SubmitSightingReducer from "./submit_sighting_reducer";
 import UpsertArchetypeReducer from "./upsert_archetype_reducer";
+import UpsertOutcomeReducer from "./upsert_outcome_reducer";
 
 // Import all procedure arg schemas
 import * as PollFeedsNowProcedure from "./poll_feeds_now_procedure";
@@ -76,8 +78,10 @@ import ElementsHistoryRow from "./elements_history_table";
 import FeedStatusRow from "./feed_status_table";
 import ForecastRow from "./forecast_table";
 import ForecastHistoryRow from "./forecast_history_table";
+import ForecastScoreRow from "./forecast_score_table";
 import MySightingsRow from "./my_sightings_table";
 import ReentryObjectRow from "./reentry_object_table";
+import ReentryOutcomeRow from "./reentry_outcome_table";
 import ReplayStateRow from "./replay_state_table";
 import ReporterStatsRow from "./reporter_stats_table";
 import SatelliteProfileRow from "./satellite_profile_table";
@@ -263,6 +267,20 @@ const tablesSchema = __schema({
       { name: 'forecast_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ForecastHistoryRow),
+  forecastScore: __table({
+    name: 'forecast_score',
+    indexes: [
+      { accessor: 'id', name: 'forecast_score_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'noradId', name: 'forecast_score_norad_id_idx_btree', algorithm: 'btree', columns: [
+        'noradId',
+      ] },
+    ],
+    constraints: [
+      { name: 'forecast_score_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ForecastScoreRow),
   reentryObject: __table({
     name: 'reentry_object',
     indexes: [
@@ -274,6 +292,17 @@ const tablesSchema = __schema({
       { name: 'reentry_object_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ReentryObjectRow),
+  reentryOutcome: __table({
+    name: 'reentry_outcome',
+    indexes: [
+      { accessor: 'noradId', name: 'reentry_outcome_norad_id_idx_btree', algorithm: 'btree', columns: [
+        'noradId',
+      ] },
+    ],
+    constraints: [
+      { name: 'reentry_outcome_norad_id_key', constraint: 'unique', columns: ['noradId'] },
+    ],
+  }, ReentryOutcomeRow),
   replayState: __table({
     name: 'replay_state',
     indexes: [
@@ -352,6 +381,7 @@ const reducersSchema = __reducers(
   __reducerSchema("fail_job", FailJobReducer),
   __reducerSchema("ingest_object", IngestObjectReducer),
   __reducerSchema("ingest_profile", IngestProfileReducer),
+  __reducerSchema("load_replay_case", LoadReplayCaseReducer),
   __reducerSchema("load_replay_script", LoadReplayScriptReducer),
   __reducerSchema("pause_replay", PauseReplayReducer),
   __reducerSchema("publish_corridor", PublishCorridorReducer),
@@ -369,6 +399,7 @@ const reducersSchema = __reducers(
   __reducerSchema("start_replay", StartReplayReducer),
   __reducerSchema("submit_sighting", SubmitSightingReducer),
   __reducerSchema("upsert_archetype", UpsertArchetypeReducer),
+  __reducerSchema("upsert_outcome", UpsertOutcomeReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
