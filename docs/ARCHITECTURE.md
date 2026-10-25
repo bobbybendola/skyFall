@@ -10,7 +10,7 @@ SpacetimeDB is not a cache or a message pipe here. The module in `spacetimedb/` 
 | Job | Lives in SpacetimeDB as |
 |---|---|
 | Who may write what | `worker_registry` + role checks in every reducer; workers approved by the operator |
-| GPU work queue, leases, retries | `compute_job` + `claim_job` / `publish_forecast` / `publish_debris` (planned) / `fail_job` + the `sweep` scheduled reducer. Two lanes per worker: one bulk job (FORECAST, FRAGMENT) and one fast job (DEBRIS, ASK, and the parked CLASSIFY/UPDATE) at a time |
+| GPU work queue, leases, retries | `compute_job` + `claim_job` / `publish_forecast` / `publish_debris` (planned) / `fail_job` + the `sweep` scheduled reducer. Two lanes per worker: one bulk job (FORECAST, DEBRIS, FRAGMENT) and one fast job (ASK, and the parked CLASSIFY/UPDATE) at a time. DEBRIS is bulk because it reuses the forecast cached in the same compute process and the compute runs one simulation at a time |
 | GPU-to-CPU failover | `claim_job` refuses CPU workers while a healthy GPU worker exists; `sweep` requeues the jobs of silent workers |
 | Re-entry forecasts for every object | FORECAST jobs (every 20 min, on new CelesTrak elements, when Kp/F10.7 move) → `forecast`, `forecast_history`, `compute_run` |
 | Debris prediction per object (planned) | `publish_forecast` queues a DEBRIS job for every object likely to re-enter within 72 h → `debris_forecast`, `debris_component`, `debris_track` |
@@ -103,7 +103,7 @@ Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `celest
 | `ingest_object(...)` | reducer | poller, operator | upsert `reentry_object`; a new tracked object gets a baseline `UPDATE` job |
 | `report_feed_status(feed, ok, error, rows)` | reducer | poller, operator | upsert `feed_status` |
 | `submit_sighting(...)` | reducer | anyone | validate, rate-limit (one per 2 s per identity), insert. With a clip: `PENDING` + `CLASSIFY` job. Without: `ACCEPTED` ("position-only report") + `UPDATE` job |
-| `claim_job()` | reducer | worker | give the caller the next `QUEUED` job in a free lane (CLASSIFY, then UPDATE, then FORECAST; oldest first). Lanes: bulk (FORECAST) and fast (the rest), one job each. Unhealthy callers get nothing; CPU tier gets nothing while a healthy GPU worker exists |
+| `claim_job()` | reducer | worker | give the caller the next `QUEUED` job in a free lane (CLASSIFY, then UPDATE, then DEBRIS, then FORECAST; oldest first). Lanes: bulk (FORECAST, DEBRIS) and fast (the rest), one job each. Unhealthy callers get nothing; CPU tier gets nothing while a healthy GPU worker exists |
 | `publish_forecast(job_id, results, job_ms, particle_steps, n_per_object, device)` | reducer | worker holding the FORECAST | upsert `forecast` + append `forecast_history` per object; new corridor version for objects that re-enter inside the horizon and have no sightings yet; log `compute_run` |
 | `request_forecast()` | reducer | operator | queue a FORECAST now |
 | `archive_current_elements()` | reducer | operator | one-off backfill of `elements_history` |
@@ -139,7 +139,7 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 ## One debris prediction, end to end (planned)
 1. `celestrak_poll` brings new elements → `elements_history` + a FORECAST job.
 2. The GPU worker runs `/forecast` for all objects → `publish_forecast` writes `forecast`. For each object with `decayed_frac ≥ 0.2` inside 72 h it queues a DEBRIS job (coalesced per object).
-3. The worker claims each DEBRIS job (fast lane) and sends `/debris` the object's elements, `satellite_profile`, `archetype` and space weather. The compute reuses that object's cached forecast particles.
+3. The worker claims each DEBRIS job (bulk lane, right after the forecast that queued it) and sends `/debris` the object's elements, `satellite_profile`, `archetype` and space weather. The compute reuses that object's cached forecast particles.
 4. `publish_debris` writes the breakdown, footprints and sample tracks. Every globe redraws: falling pieces animate, and impact zones appear colored by size and material.
 5. GX10 offline: the CPU worker (Vultr) runs the degraded settings, and the globe shows the red degraded banner.
 

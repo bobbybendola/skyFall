@@ -43,8 +43,8 @@ Written 2026-10-24 so a new Claude Code session (for example on the GX10) can co
   - private: `worker_registry`
 - **Reducers** enforce roles (operator, poller, worker) through `worker_registry`.
 - **Job queue:** `claim_job` runs two lanes:
-  - bulk: FORECAST, with a 15 min lease
-  - fast: CLASSIFY / UPDATE / DEBRIS, with a 60 s lease
+  - bulk: FORECAST and DEBRIS (DEBRIS first), with a 15 min lease
+  - fast: CLASSIFY / UPDATE, with a 60 s lease
 - **GPU → CPU failover:** CPU workers get no work while a healthy GPU worker exists.
 - **Chaining:** `publish_forecast` versions and archives the result, then queues DEBRIS jobs for objects with p ≥ 0.2 within 72 h. The worker answers them with `publish_debris`.
 - **Scheduled `sweep`, every 2 s:**
