@@ -27,4 +27,5 @@ export default __t.row({
   impactLat: __t.option(__t.f64()).name("impact_lat"),
   impactLon: __t.option(__t.f64()).name("impact_lon"),
   footprint: __t.string(),
+  pHazard: __t.f64().name("p_hazard"),
 });

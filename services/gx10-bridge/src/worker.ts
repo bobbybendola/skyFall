@@ -103,12 +103,16 @@ async function heartbeat(): Promise<void> {
   } catch {
     healthy = false;
   }
+  const t0 = Date.now();
   try {
     await conn.reducers.reportComputeStatus({ tier: TIER, gpuName, healthy });
+    const ms = Date.now() - t0;
+    if (ms > 5000) log(`slow heartbeat: maincloud took ${ms} ms (bulk jobs are kept for 60 s of silence)`);
     if (!approved) log(`approved; compute ${healthy ? 'healthy' : 'DOWN'} at ${COMPUTE}`);
     approved = true;
     note(healthy ? `compute healthy (${gpuName})` : `compute DOWN at ${COMPUTE}`);
   } catch (e) {
+    if (approved) log(`heartbeat failed after ${Date.now() - t0} ms: ${String(e).slice(0, 120)}`);
     approved = false;
     note(
       `not approved yet. Operator: spacetime call ${DB} approve_worker ${me.toHexString()} --server maincloud` +

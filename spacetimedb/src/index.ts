@@ -25,6 +25,10 @@ const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
 const DEBRIS_WITHIN = 72n * 3600n * SEC; // run debris for objects forecast to re-enter this soon
 const DEBRIS_MIN_P = 0.2; // ...with at least this chance inside the forecast horizon
 const HEARTBEAT_STALE = 10n * SEC;
+// A bulk job (FORECAST ~11 min at full size) is only taken back after this long a
+// heartbeat gap: a short Wi-Fi blip must not throw away minutes of GPU work.
+// A worker that reports healthy=false still loses its job at once.
+const HEARTBEAT_STALE_BULK = 60n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
 const MIN_SUBMIT_GAP = 2n * SEC; // per reporter, LIVE/DEMO only
@@ -282,6 +286,15 @@ const debrisForecast = table(
     device: t.string(),
     computedAt: t.timestamp(),
     note: t.string(),
+    // Danger measures (pieces landing with >= 15 J, as NASA/ESA casualty tools count).
+    // Added later, so they default to -1 = "not computed" on older rows.
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
+    hazardPiecesP95: t.f64().default(-1),
+    survivingMassFrac: t.f64().default(-1),
+    // JSON {cell_deg, n_runs, cells: [[lat_south, lon_west, runs]], truncated} for the
+    // warning-level layer (#18); '' when not computed
+    hazardGrid: t.string().default(''),
   }
 );
 
@@ -304,6 +317,7 @@ const debrisComponent = table(
     impactLat: t.f64().optional(),
     impactLon: t.f64().optional(),
     footprint: t.string(), // JSON bands
+    pHazard: t.f64().default(-1), // per copy, lands with >= 15 J; -1 = not computed
   }
 );
 
@@ -330,6 +344,8 @@ const debrisHistory = table(
     areaKm2_90: t.f64(),
     tier: t.string(),
     computedAt: t.timestamp(),
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
   }
 );
 
@@ -1241,6 +1257,13 @@ export const archiveCurrentElements = spacetimedb.reducer({}, ctx => {
   }
 });
 
+// Hazard grid as stored: '' when missing or implausibly large (the model keeps <= 5000 cells, ~100 kB).
+function gridJson(g: any): string {
+  if (!g || !Array.isArray(g.cells)) return '';
+  const s = JSON.stringify(g);
+  return s.length <= 400_000 ? s : '';
+}
+
 // result: JSON from gx10-compute /debris (docs/DEBRIS_MODEL.md §5).
 export const publishDebris = spacetimedb.reducer(
   { jobId: t.u64(), result: t.string(), jobMs: t.u32(), particleSteps: t.u64(), device: t.string() },
@@ -1279,6 +1302,11 @@ export const publishDebris = spacetimedb.reducer(
       device: a.device,
       computedAt: ctx.timestamp,
       note: String(r.note ?? '').slice(0, 200),
+      pHazard: num(r.hazard?.p_any, -1),
+      hazardPiecesMean: num(r.hazard?.pieces_mean, -1),
+      hazardPiecesP95: num(r.hazard?.pieces_p95, -1),
+      survivingMassFrac: num(r.surviving_mass_frac, -1),
+      hazardGrid: gridJson(r.hazard_grid),
     };
     if (prev) ctx.db.debrisForecast.objectId.update(row);
     else ctx.db.debrisForecast.insert(row);
@@ -1303,6 +1331,7 @@ export const publishDebris = spacetimedb.reducer(
         impactLat: opt(c.impact?.lat),
         impactLon: opt(c.impact?.lon),
         footprint: JSON.stringify(c.footprint?.bands ?? []),
+        pHazard: num(c.p_hazard, -1),
       });
     }
     for (const tr of (r.sample_tracks ?? []).slice(0, 80)) {
@@ -1324,6 +1353,8 @@ export const publishDebris = spacetimedb.reducer(
       areaKm2_90: row.areaKm2_90,
       tier,
       computedAt: ctx.timestamp,
+      pHazard: row.pHazard,
+      hazardPiecesMean: row.hazardPiecesMean,
     });
     ctx.db.computeRun.insert({
       id: 0n,
@@ -1444,9 +1475,13 @@ export const reportComputeStatus = spacetimedb.reducer(
 // Every 2 s: expire job leases and mark silent workers unhealthy.
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
-  const unhealthy = new Set<string>();
+  const unhealthy = new Set<string>(); // fast lane: down after HEARTBEAT_STALE
+  const gone = new Set<string>(); // bulk lane: reported unhealthy, or silent for HEARTBEAT_STALE_BULK
   for (const w of ctx.db.computeStatus.iter()) {
-    if (!w.healthy || olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) unhealthy.add(w.worker.toHexString());
+    const id = w.worker.toHexString();
+    if (!w.healthy || olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) unhealthy.add(id);
+    if (!w.healthy && !olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) gone.add(id); // worker said so itself
+    if (olderThan(ctx, w.updatedAt, HEARTBEAT_STALE_BULK)) gone.add(id);
   }
   let forecastPending = false;
   let lastForecast = 0n;
@@ -1456,8 +1491,9 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
       if (micros(j.createdAt) > lastForecast) lastForecast = micros(j.createdAt);
     }
     if (j.status !== 'CLAIMED') continue;
-    const lease = laneOf(j.kind) === 'bulk' ? LEASE_BULK : LEASE;
-    const holderDown = j.claimedBy ? unhealthy.has(j.claimedBy.toHexString()) : true;
+    const bulk = laneOf(j.kind) === 'bulk';
+    const lease = bulk ? LEASE_BULK : LEASE;
+    const holderDown = j.claimedBy ? (bulk ? gone : unhealthy).has(j.claimedBy.toHexString()) : true;
     if (!holderDown && !olderThan(ctx, j.claimedAt, lease)) continue;
     const giveUp = j.attempts >= MAX_ATTEMPTS;
     ctx.db.computeJob.id.update({

@@ -1,0 +1,21 @@
+/* Satellite model viewer: top right, under Cesium's home / scene-mode buttons. */
+.sat-model { position: absolute; top: 44px; right: 8px; z-index: 2; width: 320px; max-width: calc(100% - 16px); max-height: calc(100% - 260px); overflow-y: auto; background: rgba(10,10,14,0.85); color: #fff; padding: 6px 10px 8px; border-radius: 4px; font-size: 12px; line-height: 1.45; border: 1px solid rgba(255,255,255,0.15); box-sizing: border-box; }
+.sat-model.closed { width: auto; }
+.sat-model .muted { color: #bbb; }
+.sat-model .small { font-size: 11px; }
+.sat-model .mock { color: #ffcf5c; font-weight: 600; margin-left: 4px; }
+.sat-model-head { display: flex; align-items: baseline; gap: 6px; }
+.sat-model-head .muted { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sat-model-head button { background: none; border: 1px solid rgba(255,255,255,0.3); color: #fff; border-radius: 3px; width: 20px; height: 20px; line-height: 16px; padding: 0; cursor: pointer; }
+.sat-model-note { margin: 2px 0 4px; font-size: 11px; }
+.sat-model-note.warn { color: #ffcf5c; }
+.sat-model-canvas { display: block; width: 100%; height: 200px; background: radial-gradient(circle at 50% 40%, #1d2433, #0b0d12); border-radius: 3px; cursor: grab; touch-action: none; }
+.sat-model-parts { list-style: none; margin: 6px 0 4px; padding: 0; }
+.sat-model-parts li { display: grid; grid-template-columns: 12px 1fr auto; column-gap: 6px; align-items: center; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
+.sat-model-parts li .stat { grid-column: 2 / 4; font-size: 11px; }
+.sat-model-parts li.active { background: rgba(79,163,255,0.22); }
+.sat-model-parts li.pinned { outline: 1px solid #9cc3ff; }
+.sat-model .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid #888; }
+.sat-model .danger { color: #ff8080; }
+.sat-model .link { background: none; border: none; color: #9cc3ff; cursor: pointer; padding: 0 0 0 6px; font-size: 11px; text-decoration: underline; }
+@media (max-width: 640px) { .sat-model { width: calc(100% - 16px); max-height: 45%; } .sat-model-canvas { height: 150px; } }

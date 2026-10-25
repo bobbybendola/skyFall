@@ -27,4 +27,9 @@ export default __t.row({
   device: __t.string(),
   computedAt: __t.timestamp().name("computed_at"),
   note: __t.string(),
+  pHazard: __t.f64().name("p_hazard"),
+  hazardPiecesMean: __t.f64().name("hazard_pieces_mean"),
+  hazardPiecesP95: __t.f64().name("hazard_pieces_p_95"),
+  survivingMassFrac: __t.f64().name("surviving_mass_frac"),
+  hazardGrid: __t.string().name("hazard_grid"),
 });

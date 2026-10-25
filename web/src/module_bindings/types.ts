@@ -109,6 +109,7 @@ export const DebrisComponent = __t.object("DebrisComponent", {
   impactLat: __t.option(__t.f64()),
   impactLon: __t.option(__t.f64()),
   footprint: __t.string(),
+  pHazard: __t.f64(),
 });
 export type DebrisComponent = __Infer<typeof DebrisComponent>;
 
@@ -129,6 +130,11 @@ export const DebrisForecast = __t.object("DebrisForecast", {
   device: __t.string(),
   computedAt: __t.timestamp(),
   note: __t.string(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
+  hazardPiecesP95: __t.f64(),
+  survivingMassFrac: __t.f64(),
+  hazardGrid: __t.string(),
 });
 export type DebrisForecast = __Infer<typeof DebrisForecast>;
 
@@ -141,6 +147,8 @@ export const DebrisHistory = __t.object("DebrisHistory", {
   areaKm290: __t.f64(),
   tier: __t.string(),
   computedAt: __t.timestamp(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
 });
 export type DebrisHistory = __Infer<typeof DebrisHistory>;
 
