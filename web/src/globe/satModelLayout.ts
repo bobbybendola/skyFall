@@ -79,6 +79,35 @@ function mountOnFaces(
   return rest;
 }
 
+/** Axial layouts: a docking port goes on the parent's top end and an engine on its bottom
+ * end, when that end is the end of the whole stack. Returns the items left over. */
+function mountOnEnds(
+  parent: Piece,
+  items: Item[],
+  pieces: Piece[],
+  add: (p: ArchetypePart, copy: number, pos: Vec3, size?: Vec3) => Piece
+): Item[] {
+  const top = Math.max(...pieces.map(q => q.pos[2] + q.size[2] / 2));
+  const bottom = Math.min(...pieces.map(q => q.pos[2] - q.size[2] / 2));
+  const eps = 1e-6;
+  let up = parent.pos[2] + parent.size[2] / 2;
+  let down = parent.pos[2] - parent.size[2] / 2;
+  const atTop = up >= top - eps;
+  const atBottom = down <= bottom + eps;
+  const rest: Item[] = [];
+  for (const it of items) {
+    const cyl = it.p.shape === 'cylinder';
+    if (cyl && atTop && FORE.test(it.p.name) && it.copy === 0) {
+      add(it.p, it.copy, [parent.pos[0], parent.pos[1], up + GAP + it.size[2] / 2]);
+      up += GAP + it.size[2];
+    } else if (cyl && atBottom && AFT.test(it.p.name) && it.copy === 0) {
+      add(it.p, it.copy, [parent.pos[0], parent.pos[1], down - GAP - it.size[2] / 2]);
+      down -= GAP + it.size[2];
+    } else rest.push(it);
+  }
+  return rest;
+}
+
 const STACK_GAP = 0.003;
 const STACK_MIN_THICK = 0.004;
 type Item = { p: ArchetypePart; copy: number; size: Vec3 };
@@ -116,6 +145,9 @@ function stackLayers(items: Item[], w: number, d: number, h: number) {
 }
 
 const isWing = (p: ArchetypePart) => p.shape === 'plate' && /solar/i.test(p.name);
+// Axial (stage / cargo vehicle) layout: parts that sit at the ends of the stack.
+const AFT = /engine|nozzle|thruster/i;
+const FORE = /dock|hatch|probe/i;
 const totalMass = (p: ArchetypePart) => (p.mass_kg || 0) * Math.max(1, p.count || 1);
 
 /** Shelf-pack rectangles (w x d) into rows no wider than `maxW`; returns centre offsets around (0, 0). */
@@ -181,7 +213,32 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
   // 1. Core: the heaviest root that is not a solar wing. Several plate copies stack into a flat bus.
   const nonWing = roots.filter(p => !isWing(p));
   const core = [...(nonWing.length ? nonWing : roots)].sort((a, b) => totalMass(b) - totalMass(a))[0];
-  {
+  const others = roots.filter(p => p !== core && !isWing(p));
+  // A cylinder core with cylinder / ring neighbours (a rocket stage, a cargo vehicle) is
+  // stacked end to end along z: rings on top, then modules in list order, engines last.
+  const isRing = (p: ArchetypePart) => {
+    const s = sizeOf(p).size;
+    return p.shape !== 'cylinder' && p.shape !== 'sphere' && s[2] < Math.min(s[0], s[1]) / 2;
+  };
+  const axial = core.shape === 'cylinder' && others.length > 0 && others.every(p => p.shape === 'cylinder' || isRing(p));
+  if (axial) {
+    const rank = (p: ArchetypePart) => (isRing(p) ? 0 : AFT.test(p.name) ? 2 : 1);
+    const order = [core, ...others].sort((a, b) => rank(a) - rank(b) || parts.indexOf(a) - parts.indexOf(b));
+    let z = 0;
+    for (const p of order) {
+      const s = sizeOf(p).size;
+      for (let i = 0; i < copies(p); i++) {
+        const piece = add(p, i, [0, 0, z - s[2] / 2]);
+        // A flat box on a round stack is an interstage ring: draw it round (drawing only).
+        if (isRing(p)) {
+          const D = Math.max(s[0], s[1]);
+          piece.shape = 'cylinder';
+          piece.size = [D, D, s[2]];
+        }
+        z -= s[2] + GAP;
+      }
+    }
+  } else {
     const s = sizeOf(core).size;
     const n = copies(core);
     const stack = core.shape === 'plate' || s[2] < Math.min(s[0], s[1]) / 2;
@@ -193,12 +250,11 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
   let coreBox = groupBox(core.name);
 
   // 2. Other roots: big flat ones (an interstage ring) on top; the rest hang below in a packed grid.
-  const others = roots.filter(p => p !== core && !isWing(p));
   const below: { p: ArchetypePart; copy: number; size: Vec3 }[] = [];
   const coreW = coreBox.max[0] - coreBox.min[0];
   const coreD = coreBox.max[1] - coreBox.min[1];
   let topZ = coreBox.max[2];
-  for (const p of others) {
+  for (const p of axial ? [] : others) {
     const s = sizeOf(p).size;
     const wide = s[0] * s[1] >= 0.5 * coreW * coreD && s[2] < Math.max(s[0], s[1]);
     for (let i = 0; i < copies(p); i++) {
@@ -214,7 +270,9 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
   }
 
   // 3. Solar wings: long side along x, out from the bus on a short boom, alternating +x / -x.
-  coreBox = groupBox(core.name);
+  //    On an axial stack they go on the aft-most module that is not an engine (the service module).
+  const wingHost = axial ? [core, ...others].filter(p => p.shape === 'cylinder' && !AFT.test(p.name)).sort((a, b) => groupBox(a.name).min[2] - groupBox(b.name).min[2])[0] ?? core : core;
+  coreBox = groupBox(wingHost.name);
   const zMid = (coreBox.min[2] + coreBox.max[2]) / 2;
   let reach = { '1': coreBox.max[0], '-1': coreBox.min[0] };
   let k = 0;
@@ -242,6 +300,7 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
       let items = kids.flatMap(p => Array.from({ length: copies(p) }, (_, i) => ({ p, copy: i, size: sizeOf(p).size })));
       const parentPieces = pieces.filter(q => q.part === parentName);
       if (parentPieces.length === 1 && parentPieces[0].shape === 'box') items = mountOnFaces(parentPieces[0], items, add);
+      if (axial && parentPieces.length === 1) items = mountOnEnds(parentPieces[0], items, pieces, add);
       for (const p of kids) placed.add(p.name);
       if (!items.length) continue;
       const pb = groupBox(parentName);
@@ -265,6 +324,17 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
           for (const q of pieces) if (q.part === parentName) q.translucent = true;
           continue;
         }
+      }
+      if (!inside && axial) {
+        // Neighbouring modules sit above and below, so put what does not fit around the parent.
+        const R = Math.max(w, d) / 2;
+        const zc = (pb.min[2] + pb.max[2]) / 2;
+        items.forEach((it, i) => {
+          const a = (2 * Math.PI * i) / items.length;
+          const r = R + GAP + Math.max(it.size[0], it.size[1]) / 2;
+          add(it.p, it.copy, [cx + r * Math.cos(a), cy + r * Math.sin(a), zc]);
+        });
+        continue;
       }
       items.forEach((it, i) => {
         const z = inside ? (pb.min[2] + pb.max[2]) / 2 : pb.max[2] + GAP + it.size[2] / 2;
