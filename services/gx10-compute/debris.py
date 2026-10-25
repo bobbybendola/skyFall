@@ -356,7 +356,7 @@ def fly(
     atm: Atmosphere,
     track_rows: torch.Tensor,
     dt_fast: float = 0.5,
-    dt_slow: float = 2.0,
+    dt_slow: float = 0.25,
 ) -> FlightResult:
     """Integrate all rows to demise or impact.
 
@@ -702,7 +702,9 @@ def run_debris(
     kp = float((sw or {}).get('kp') or 2.0)
     when = datetime.fromtimestamp(float(np.median(t_e)), timezone.utc)
     atm = Atmosphere(density_table(f107, kp, when, LOW_ALT_GRID), device, dt_, h0=LOW_ALT_GRID[0])
-    res = fly(r0, v0, t0, T, atm, track_rows, dt_fast=1.0 if degraded else 0.5, dt_slow=4.0 if degraded else 2.0)
+    res = fly(r0, v0, t0, T, atm, track_rows, dt_fast=1.0 if degraded else 0.5, dt_slow=1.0 if degraded else 0.25)
+    # dt_slow: below 1 km/s light pieces have drag rate k ~ g/v_term ~ 1-3 /s; a 2 s step
+    # (k dt >> 1) under-reports their impact speed ~3x. 0.25 s matches 0.1 s.
 
     # ---- aggregate
     st = res.state.reshape(P, K)
@@ -711,8 +713,11 @@ def run_debris(
     spd = res.speed.reshape(P, K)
     energy = 0.5 * mass * spd**2
     area = res.area.reshape(P, K)
-    a_c = np.where(land & (energy >= KE_CASUALTY_J), (math.sqrt(H_PERSON_M2) + np.sqrt(area)) ** 2, 0.0)
+    hazard = land & (energy >= KE_CASUALTY_J)  # what casualty-risk tools count (NASA-STD-8719.14)
+    a_c = np.where(hazard, (math.sqrt(H_PERSON_M2) + np.sqrt(area)) ** 2, 0.0)
     surv_mass = np.where(land, mass, 0.0).sum(1)
+    total_mass = float(sum(c['mass_kg'] * c['count'] for c in comps))
+    n_hazard = hazard.sum(1)
     lat, lon, t_end, alt_end = (x.reshape(P, K) for x in (res.lat, res.lon, res.t_end, res.alt_end))
     t_max, q_max = res.t_max.reshape(P, K), res.q_max.reshape(P, K)
 
@@ -729,6 +734,7 @@ def run_debris(
             'name': c['name'], 'material': c['material'], 'shape': c['shape'], 'count': c['count'],
             'parent': c['parent'], 'mass_kg_start': round(c['mass_kg'], 3),
             'p_survive': round(float(ok.mean()), 4),
+            'p_hazard': round(float(hazard[:, ks].mean()), 4),  # per copy, lands with >= 15 J
             'p_unresolved': round(float((st[:, ks] == UNRESOLVED).mean()), 4),
             'mass_kg': {'start': round(c['mass_kg'], 3), **_stat(mass[:, ks].ravel()[ok])},
             'impact_speed_ms': _stat(spd[:, ks].ravel()[ok], 1),
@@ -757,7 +763,16 @@ def run_debris(
         'n_particles': P,
         'n_pieces_per_particle': K,
         'degraded': degraded,
+        # any piece at all reaches the ground, even a harmless flake: near 1 for most
+        # satellites, so it is not a danger measure. Use 'hazard' for that.
         'p_any_survives': round(float(land.any(1).mean()), 4),
+        'hazard': {
+            'ke_threshold_j': KE_CASUALTY_J,
+            'p_any': round(float(n_hazard.astype(bool).mean()), 4),
+            'pieces_mean': round(float(n_hazard.mean()), 3),
+            'pieces_p95': round(float(np.percentile(n_hazard, 95)), 3),
+        },
+        'surviving_mass_frac': round(float(surv_mass.mean()) / total_mass, 4) if total_mass > 0 else 0.0,
         'surviving_mass_kg': {'mean': round(float(surv_mass.mean()), 3), 'p95': round(float(np.percentile(surv_mass, 95)), 3)},
         'casualty_area_m2': {'mean': round(float(a_c.sum(1).mean()), 3)},
         'components': comp_out,
