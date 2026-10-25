@@ -23,7 +23,8 @@ import { altitudeInfo, altitudeText, sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
 import { dangerText, type DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
-import { localTime, reentryCss, relTime, useClockNow } from './legend.tsx';
+import { EntryDot, localTime, relTime, useClockNow } from './legend.tsx';
+import { DANGER_P } from './pointStyle.ts';
 import { resetClock } from './cesium-setup.ts';
 
 const PATH_HOURS = 3;
@@ -204,7 +205,7 @@ export function SelectedCard({
       {r ? (
         <>
           <div>
-            <span className="dot" style={{ background: reentryCss(r.t50, nowMs) }} /> Likely re-entry <b>{relTime(r.t50, nowMs)}</b> ({localTime(r.t50)})
+            <EntryDot r={r} nowMs={nowMs} dangerous={(debris?.hazard?.p_any ?? 0) >= DANGER_P && debris?.source === 'live'} /> Likely re-entry <b>{relTime(r.t50, nowMs)}</b> ({localTime(r.t50)})
           </div>
           <div className="muted">
             90% chance between {relTime(r.t05, nowMs).replace(/^in /, '')} and {relTime(r.t95, nowMs).replace(/^in /, '')} from now · {Math.round(r.p * 100)}% of runs re-enter inside the forecast window
