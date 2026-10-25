@@ -47,7 +47,7 @@ FLAT = 1 / 298.257223563
 E2 = FLAT * (2 - FLAT)
 OMEGA_E = 7.292115e-5  # rad / s
 H_REENTRY = 80.0  # km
-ALT_GRID = (60.0, 1200.0)  # km, 1 km spacing for the density table
+ALT_GRID = (0.0, 1200.0)  # km, 1 km spacing for the density table
 
 # Prior spreads (1 sigma). Documented knobs.
 SIG_LOG_DRAG = 0.25  # calibration + density model error, before Kp widening
@@ -232,6 +232,8 @@ class PropResult:
     t_reentry: torch.Tensor  # unix seconds, NaN if survived the horizon
     lat: torch.Tensor
     lon: torch.Tensor
+    r_reentry: torch.Tensor  # inertial position in km at the 80 km crossing
+    v_reentry: torch.Tensor  # inertial velocity in km/s at the 80 km crossing
     steps: int
     particle_steps: int
 
@@ -252,12 +254,15 @@ def propagate(
     t_re = torch.full((P,), float('nan'), device=dev, dtype=torch.float64)
     lat_re = torch.full((P,), float('nan'), device=dev, dtype=dt_)
     lon_re = torch.full((P,), float('nan'), device=dev, dtype=dt_)
+    r_re = torch.full((P, 3), float('nan'), device=dev, dtype=dt_)
+    v_re = torch.full((P, 3), float('nan'), device=dev, dtype=dt_)
     idx = torch.arange(P, device=dev)
     r, v, b = r0.clone(), v0.clone(), bc.clone()
     h_prev = altitude(r)
     n_steps = int(math.ceil(horizon_s / dt))
     psteps = 0
     for s in range(n_steps):
+        r_prev, v_prev = r, v
         k1v = accel(r, v, b, atm)
         k1r = v
         k2v = accel(r + 0.5 * dt * k1r, v + 0.5 * dt * k1v, b, atm)
@@ -275,18 +280,21 @@ def propagate(
             # linear interpolation of the crossing inside the step
             f = ((h_prev[down] - H_REENTRY) / (h_prev[down] - h[down]).clamp_min(1e-6)).clamp(0, 1)
             tc = t0_unix + (s + f.double()) * dt
-            rc = r[down]  # end-of-step position; error < one step of ground track
+            rc = r_prev[down] + f[:, None] * (r[down] - r_prev[down])
+            vc = v_prev[down] + f[:, None] * (v[down] - v_prev[down])
             la, lo = eci_to_latlon(rc, tc)
             gi = idx[down]
             t_re[gi] = tc
             lat_re[gi] = la
             lon_re[gi] = lo
+            r_re[gi] = rc
+            v_re[gi] = vc
             keep = ~down
             r, v, b, h, idx = r[keep], v[keep], b[keep], h[keep], idx[keep]
             if r.shape[0] == 0:
-                return PropResult(t_re, lat_re, lon_re, s + 1, psteps)
+                return PropResult(t_re, lat_re, lon_re, r_re, v_re, s + 1, psteps)
         h_prev = h
-    return PropResult(t_re, lat_re, lon_re, n_steps, psteps)
+    return PropResult(t_re, lat_re, lon_re, r_re, v_re, n_steps, psteps)
 
 
 # ------------------------------------------------------------------ calibration
@@ -409,6 +417,8 @@ class ObjectState:
     t_re: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
+    r_re: np.ndarray
+    v_re: np.ndarray
     bc: float
     calibrated: bool
     rv: tuple[np.ndarray, np.ndarray]
@@ -523,6 +533,8 @@ class Engine:
                 t_re=t_re[sl],
                 lat=lat[sl],
                 lon=lon[sl],
+                r_re=res.r_re[sl].cpu().numpy().astype(np.float64),
+                v_re=res.v_re[sl].cpu().numpy().astype(np.float64),
                 bc=float(bc_np[j]),
                 calibrated=bool(ok_np[j]),
                 rv=(r, v),
@@ -600,6 +612,8 @@ class Engine:
         st.t_re = res.t_reentry.cpu().numpy()
         st.lat = res.lat.cpu().numpy().astype(np.float64)
         st.lon = res.lon.cpu().numpy().astype(np.float64)
+        st.r_re = res.r_re.cpu().numpy().astype(np.float64)
+        st.v_re = res.v_re.cpu().numpy().astype(np.float64)
 
     def _summarise(self, oid: str, st: ObjectState, w: np.ndarray, scores: list) -> dict:
         decayed = np.isfinite(st.t_re)

@@ -2,6 +2,11 @@
 
 Goal: for one object predicted to re-enter, estimate which pieces survive to the ground, how big they are, what they're made of, and where they land, with probabilities. It runs on the GX10. Everything below is a **simplified, documented model** (a lumped-mass "object-oriented" approach like NASA DAS / ESA DRAMA-SARA, much reduced). It is not an operator assessment. Constants marked **check** must be verified against the cited sources before the demo, and this file updated.
 
+## Implementation status
+`POST /debris` has an initial sphere-and-cylinder implementation. It reuses the forecast engine's 80 km particle states, propagates each component with Torch RK4, drag and lumped heating, and returns component survival estimates, impact footprints and representative tracks. It uses CUDA when `USE_GPU=1` (the default) and returns HTTP 503 if CUDA is unavailable; `USE_GPU=0` is an explicit, labeled CPU-degraded mode limited to 100 particles and three components. This version does not implement breakup-altitude variation, parent/child shielding, boxes or plates, or component-orientation dynamics.
+
+The numerical material, aerodynamic and heating constants below remain unverified assumptions. The current implementation applies 15% of the shape's surface area as effective heating area; this is a model knob, not a validated material or aerodynamic constant. Repeated components share the same sampled trajectory, and components are released together at 80 km. Outputs are **modeled estimates**, not operational predictions. A successful CPU unit test does not establish GPU or GX10 performance; the endpoint's reported `device`, `gpu_name` and `tier` must be checked on the actual GX10.
+
 ## Pipeline
 ```
 forecast particles (sim.py) ──► state at 80 km for each particle (r, v, t)
@@ -14,10 +19,10 @@ forecast particles (sim.py) ──► state at 80 km for each particle (r, v, t)
         └─ for every (particle × component): 3-DOF flight to the ground with heating
               → demised (altitude where it burned up) or survived (impact lat/lon/time, mass, speed, energy)
 ```
-Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 including multiples) × steps (0.5 s steps over ~5–10 min of flight ≈ 600–1,200) ≈ 10⁸ component-steps per object. GPU tensors throughout.
+Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 including multiples) × at most 3,600 half-second steps per component in v0. The component flight and heating calculations run as GPU tensors in default mode; footprint contour extraction is CPU-side.
 
 ## 1. Inputs
-- **Re-entry states:** the forecast keeps, per particle, the time of the 80 km crossing and its inertial position and velocity. (Change needed in `sim.py`: today it stores only time and lat/lon.)
+- **Re-entry states:** the forecast keeps, per particle, the time of the 80 km crossing and its inertial position and velocity.
 - **Profile:** mass, dimensions, shape and object type from `satellite_profile` (GCAT / SATCAT / DISCOSweb), mapped to an archetype.
 - **Space weather:** atmospheric density from NRLMSIS, as in the forecast.
 
@@ -37,6 +42,8 @@ Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 i
   ]
 }
 ```
+- Request body: `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}`. The object needs GP/OMM elements and forecast particles crossing 80 km. `n_particles` defaults to 2,000 on CUDA and 100 in explicit CPU-degraded mode.
+- `device`, `tier`, `degraded`, and `particle_steps` report actual compute execution; do not infer GPU use from configuration alone.
 - `dims_m`: box [l, w, h], plate [l, w, t], cylinder [length, diameter], sphere [diameter].
 - Masses scale to the profile's mass when it is known (the structure absorbs the difference); otherwise use the archetype's values.
 - Every number has a source or an "assumed" note. **The archetype is part of what we show judges.**
@@ -77,10 +84,10 @@ All values are **check** against ESA DRAMA/SESAM or ORSAT material tables.
      "demise_alt_km": {"mean": null}, "footprint": {"bands": [{"level": 50, "polygon": [[lon, lat], "..."]}, {"level": 90, "polygon": "..."}]}}
   ],
   "footprint": {"bands": ["...all survivors combined..."], "area_km2_90": 41000},
-  "sample_tracks": [{"component": "reaction wheel", "points": [[t_s, lat, lon, alt_km], "..."]}]
+  "sample_tracks": [{"component": "reaction wheel", "points": [[t_unix, lat, lon, alt_km], "..."]}]
 }
 ```
-- `sample_tracks`: a few representative falling trajectories per component, downsampled (≤ 60 points each), for the 3D animation.
+- `sample_tracks`: one representative falling trajectory per component in v0, downsampled (≤ 60 points each), for the 3D animation. Times are Unix seconds; impacts beyond the 30-minute integration limit remain unresolved and are reported separately.
 - Casualty area per surviving piece: `A_c = (0.6 + sqrt(A_i))²` m² (NASA DAS form, 0.36 m² person; check NASA-STD-8719.14).
 
 ## 6. In-orbit breakup (stretch: `/fragment`)

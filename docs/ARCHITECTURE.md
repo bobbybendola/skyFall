@@ -152,10 +152,10 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 Target: tap to visible change in about 2 seconds. New sightings arriving while an UPDATE runs coalesce into the next one.
 
 ## gx10-compute API
-- `POST /debris` (planned) → body `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?}` → see `docs/DEBRIS_MODEL.md` §5
+- `POST /debris` → body `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}` → see `docs/DEBRIS_MODEL.md` §5. CUDA is required by default; `USE_GPU=0` explicitly opts into CPU-degraded mode. The SpacetimeDB DEBRIS job flow remains planned.
 - `POST /fragment` (stretch) → body `{parent: {id, elements, mass_kg}, kind, params}` → fragment snapshots + decay dates
 - `POST /forecast` → body `{objects: [{id, elements (GP/OMM JSON)}], space_weather?: {kp, f107}, as_of?}` → `{results: [{id, status, t_quantiles: {"5","25","50","75","95"}, decayed_frac, bands, area_km2_90, n_samples, ess, calibrated, bc_m2_kg}], ms, device, n_per_object, horizon_days, particle_steps}`. The physics is in `services/gx10-compute/sim.py`; see `docs/SIM_SPEC.md`
-- `GET /health` → GPU name, free memory, model status, `use_gpu`
+- `GET /health` → GPU name, free memory, model status, `use_gpu`, `debris_mode`, `debris_available`
 - `POST /classify` → body `{image_b64 | clip_ref}` → `{label, confidence, reason}`; labels: `reentry`, `meteor`, `aircraft_or_train`, `nothing`
 - `POST /update` → body `{object: {id, elements, window_start?, window_end?}, sightings: [{id, lat, lon, observed_at, bearing_deg?, trust}], space_weather?: {kp, f107}}` → `{bands: [{level, polygon}], area_km2_90, n_samples, ess, ms, scores: [{id, p_inlier}]}`
 Polygons are GeoJSON-style `[lon, lat]` rings, simplified to at most a few hundred points before leaving compute. `trust` = `(agreed + accepted + 1) / (agreed + disagreed + accepted + rejected + 2)` from `reporter_stats`; compute lowers a sighting's outlier rate as trust rises (see SIM_SPEC.md).

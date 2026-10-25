@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import math
 import os
-import time
-from datetime import datetime
-
 import threading
+import time
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -65,6 +64,16 @@ class ForecastIn(BaseModel):
     as_of: str | None = None  # ISO 8601; default now (replays pass the event time)
 
 
+class DebrisIn(BaseModel):
+    object: ForecastObject
+    profile: dict
+    archetype: dict
+    space_weather: dict | None = None
+    n_particles: int | None = None
+    seed: int | None = None
+    as_of: str | None = None
+
+
 class SightingIn(BaseModel):
     id: int | None = None
     trust: float = 0.5  # from reporter_stats via the worker; lowers eps for good reporters
@@ -98,6 +107,16 @@ def _gpu_info() -> tuple[str, float | None]:
         return "cpu (cuda unavailable)", None
     except ImportError:
         return "cpu (torch not installed)", None
+
+
+def _debris_capability() -> tuple[str, bool]:
+    try:
+        import torch
+    except ImportError:
+        return "unavailable", False
+    if USE_GPU:
+        return ("gpu", True) if torch.cuda.is_available() else ("unavailable", False)
+    return "cpu_degraded", True
 
 
 def _ts(s: str) -> float:
@@ -152,7 +171,17 @@ def _band(el: dict, t_mid: float, half_s: float, half_width_km: float, n: int = 
 @app.get("/health")
 def health() -> dict:
     gpu, free_gb = _gpu_info()
-    out = {"ok": True, "gpu": gpu, "free_mem_gb": free_gb, "use_gpu": USE_GPU, "phase": 2, "model": "sim-v1"}
+    debris_mode, debris_available = _debris_capability()
+    out = {
+        "ok": True,
+        "gpu": gpu,
+        "free_mem_gb": free_gb,
+        "use_gpu": USE_GPU,
+        "debris_mode": debris_mode,
+        "debris_available": debris_available,
+        "phase": 2,
+        "model": "sim-v1",
+    }
     if _engine is not None:
         out.update(n_per_object=_engine.n, horizon_days=_engine.horizon_s / 86400, particle_steps_total=_engine.particle_steps_total)
     return out
@@ -190,6 +219,79 @@ def forecast(body: ForecastIn) -> dict:
         "horizon_days": eng.horizon_s / 86400,
         "particle_steps": eng.particle_steps_total - before,
     }
+
+
+def _debris_device():
+    try:
+        from debris import resolve_device
+    except ImportError as exc:
+        raise HTTPException(503, f"debris runtime dependency unavailable: {exc.name or exc}") from exc
+    try:
+        return resolve_device(USE_GPU)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/debris")
+def debris(body: DebrisIn) -> dict:
+    t0 = time.perf_counter()
+    device = _debris_device()
+    eng = engine()
+    if eng.device.type != device.type:
+        raise HTTPException(503, "compute engine device does not match configured debris mode")
+
+    obj = body.object.model_dump()
+    when = _as_of(body.as_of)
+    from datetime import timezone
+
+    now = when or datetime.now(timezone.utc)
+    with _engine_lock:
+        state = eng.cache.get(obj["id"])
+        expected_key = eng._key(obj, body.space_weather, now)
+        if state is None or state.key != expected_key:
+            eng.forecast([obj], body.space_weather, now)
+            state = eng.cache.get(obj["id"])
+        if state is None:
+            raise HTTPException(422, "forecast could not produce re-entry particles for this object")
+
+        valid = (
+            (state.t_re == state.t_re)
+            & (state.r_re == state.r_re).all(axis=1)
+            & (state.v_re == state.v_re).all(axis=1)
+        )
+        if not valid.any():
+            raise HTTPException(422, "forecast has no particles crossing the 80 km re-entry boundary")
+
+        import numpy as np
+
+        default_n = 2000 if device.type == "cuda" else 100
+        max_n = 10000 if device.type == "cuda" else 100
+        n_particles = default_n if body.n_particles is None else body.n_particles
+        if n_particles < 1 or n_particles > max_n:
+            raise HTTPException(422, f"n_particles must be between 1 and {max_n} for {device.type} mode")
+        try:
+            from debris import predict_debris
+
+            result = predict_debris(
+                object_id=obj["id"],
+                profile=body.profile,
+                archetype=body.archetype,
+                r_reentry=state.r_re[valid],
+                v_reentry=state.v_re[valid],
+                t_reentry=state.t_re[valid],
+                atmosphere=state.meta["atm"],
+                device=device,
+                n_particles=n_particles,
+                seed=body.seed,
+                max_components=None if device.type == "cuda" else 3,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    result["ms"] = int((time.perf_counter() - t0) * 1000)
+    result["tier"] = "gpu" if device.type == "cuda" else "cpu"
+    result["degraded"] = device.type != "cuda"
+    return result
 
 
 @app.post("/update")
