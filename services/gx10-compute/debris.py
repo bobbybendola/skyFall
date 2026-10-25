@@ -446,6 +446,24 @@ def fly(
         sp_new = torch.linalg.vector_norm(v_half - wr_new, dim=1)
         k_new = 0.5e3 * atm.rho(h_new) * sp_new * bc
         v_new = (v_half - wr_new) * torch.exp(-0.5 * k_new * dt)[:, None] + wr_new
+        # Below 1 km/s light pieces have k ~ g/v_term ~ 1-3 /s, so k dt >> 1 and the split
+        # above settles at far below terminal speed (a 2 s step lands a 0.5 kg plate at
+        # 5 m/s, not 12). There, use the exact solution of du/dt = -k u + g with k, g and
+        # the rotating-air velocity w frozen over the step: it reaches u = g/k (terminal
+        # speed) at any dt.
+        slow = sp < 1.0
+        if bool(slow.any()):
+            x = k * dt
+            kc = k.clamp_min(1e-30)
+            a = torch.where(x > 1e-3, -torch.expm1(-x) / kc, dt * (1 - 0.5 * x))  # int_0^dt e^-ks ds
+            b = torch.where(x > 1e-3, (dt - a) / kc, dt * dt * (0.5 - x / 6))  # int_0^dt of that
+            g0 = _gravity(r)
+            u = v - wr
+            r_s = r + u * a[:, None] + g0 * b[:, None] + dt * wr
+            v_s = u * torch.exp(-x)[:, None] + g0 * a[:, None] + wr
+            r_new = torch.where(slow[:, None], r_s, r_new)
+            v_new = torch.where(slow[:, None], v_s, v_new)
+            h_new = torch.where(slow, altitude(r_new), h_new)
         t_new = t_off + dt
         row_steps += r.shape[0]
         steps += 1
@@ -711,8 +729,11 @@ def run_debris(
     spd = res.speed.reshape(P, K)
     energy = 0.5 * mass * spd**2
     area = res.area.reshape(P, K)
-    a_c = np.where(land & (energy >= KE_CASUALTY_J), (math.sqrt(H_PERSON_M2) + np.sqrt(area)) ** 2, 0.0)
+    hazard = land & (energy >= KE_CASUALTY_J)  # what casualty-risk tools count (NASA-STD-8719.14)
+    a_c = np.where(hazard, (math.sqrt(H_PERSON_M2) + np.sqrt(area)) ** 2, 0.0)
     surv_mass = np.where(land, mass, 0.0).sum(1)
+    total_mass = float(sum(c['mass_kg'] * c['count'] for c in comps))
+    n_hazard = hazard.sum(1)
     lat, lon, t_end, alt_end = (x.reshape(P, K) for x in (res.lat, res.lon, res.t_end, res.alt_end))
     t_max, q_max = res.t_max.reshape(P, K), res.q_max.reshape(P, K)
 
@@ -729,6 +750,7 @@ def run_debris(
             'name': c['name'], 'material': c['material'], 'shape': c['shape'], 'count': c['count'],
             'parent': c['parent'], 'mass_kg_start': round(c['mass_kg'], 3),
             'p_survive': round(float(ok.mean()), 4),
+            'p_hazard': round(float(hazard[:, ks].mean()), 4),  # per copy, lands with >= 15 J
             'p_unresolved': round(float((st[:, ks] == UNRESOLVED).mean()), 4),
             'mass_kg': {'start': round(c['mass_kg'], 3), **_stat(mass[:, ks].ravel()[ok])},
             'impact_speed_ms': _stat(spd[:, ks].ravel()[ok], 1),
@@ -757,7 +779,16 @@ def run_debris(
         'n_particles': P,
         'n_pieces_per_particle': K,
         'degraded': degraded,
+        # any piece at all reaches the ground, even a harmless flake: near 1 for most
+        # satellites, so it is not a danger measure. Use 'hazard' for that.
         'p_any_survives': round(float(land.any(1).mean()), 4),
+        'hazard': {
+            'ke_threshold_j': KE_CASUALTY_J,
+            'p_any': round(float(n_hazard.astype(bool).mean()), 4),
+            'pieces_mean': round(float(n_hazard.mean()), 3),
+            'pieces_p95': round(float(np.percentile(n_hazard, 95)), 3),
+        },
+        'surviving_mass_frac': round(float(surv_mass.mean()) / total_mass, 4) if total_mass > 0 else 0.0,
         'surviving_mass_kg': {'mean': round(float(surv_mass.mean()), 3), 'p95': round(float(np.percentile(surv_mass, 95)), 3)},
         'casualty_area_m2': {'mean': round(float(a_c.sum(1).mean()), 3)},
         'components': comp_out,

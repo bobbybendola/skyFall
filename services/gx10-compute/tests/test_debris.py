@@ -227,3 +227,36 @@ def test_integrator_converges():
     coarse = _impact_after(0.5, 2.0)
     d = sim._great_circle_km(np.array([coarse[0]]), np.array([coarse[1]]), ref[0], ref[1])[0]
     assert d < 5.0, d  # impact point within 5 km of a 10x finer step
+
+
+def _plate_impact_speed(dt_slow):
+    # light Ti plate: reaches terminal speed (~11 m/s) high up, where k dt >> 1 at dt 2 s
+    r, v, t = dm.entry_from_nominal({**ENTRY, 'flight_path_deg': -0.9}, 1, np.random.default_rng(0))
+    m0, (s0, rn0) = 0.5, dm._geometry('plate', [0.3, 0.3, 0.003])
+    row = {k: torch.tensor([x], dtype=torch.float64) for k, x in dict(
+        m0=m0, s0=s0, rn0=rn0, cd=1.2, cp=560.0, hf=3.6e5, tm=1943.0, eps=0.3, heat=1.0,
+        release_alt=80.0, bc_intact=0.01).items()}
+    row['parent'] = torch.tensor([-1])
+    atm = sim.Atmosphere(sim.density_table(150, 2, datetime(2026, 10, 25, tzinfo=timezone.utc), dm.LOW_ALT_GRID), DEV, torch.float64, h0=0.0)
+    res = dm.fly(torch.tensor(r, dtype=torch.float64), torch.tensor(v, dtype=torch.float64), t, row, atm, torch.tensor([0]), 0.5, dt_slow)
+    assert res.state[0] == dm.LANDED
+    return float(res.speed[0])
+
+
+def test_light_piece_impact_speed_converges():
+    ref = _plate_impact_speed(0.05)
+    assert abs(_plate_impact_speed(2.0) - ref) < 0.05 * ref, (ref, _plate_impact_speed(2.0))  # the live step
+
+
+def test_hazard_metrics_consistent():
+    arche = json.loads((HERE / 'fixtures' / 'test-flatpanel.json').read_text())
+    out = run(arche['components'], n=50)
+    hz = out['hazard']
+    assert hz['ke_threshold_j'] == 15
+    assert 0 <= hz['p_any'] <= out['p_any_survives'] <= 1  # hazardous pieces are a subset
+    assert hz['pieces_mean'] >= 0 and hz['pieces_p95'] >= 0
+    assert 0 <= out['surviving_mass_frac'] <= 1
+    for c in out['components']:
+        assert 0 <= c['p_hazard'] <= c['p_survive'] + 1e-9
+    if hz['p_any'] == 0:
+        assert out['casualty_area_m2']['mean'] == 0
