@@ -250,7 +250,7 @@ async function runDebris(job: Job, t0: number): Promise<void> {
           rcs_size: profile.rcsSize ?? null,
           confidence: profile.confidence,
         }
-      : null,
+      : {},
     archetype: { id: arch.id, name: arch.name, components: JSON.parse(arch.components), confidence: arch.confidence },
     forecast: fc?.tQ50 ? { t_q50: iso(fc.tQ50), t_q05: fc.tQ05 ? iso(fc.tQ05) : null, t_q95: fc.tQ95 ? iso(fc.tQ95) : null } : null,
     space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null,

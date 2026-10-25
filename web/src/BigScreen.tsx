@@ -16,6 +16,7 @@ import {
   VERDICT_COLOR,
 } from './live.ts';
 import { sgp4Point } from './orbit.ts';
+import { ComputeStatusBanner } from './computeStatus.tsx';
 
 export function BigScreen() {
   const conn = useSpacetimeDB();
@@ -133,8 +134,6 @@ export function BigScreen() {
   const jobsBy = (s: string) => jobs.filter(j => j.status === s).length;
   const sw = weather.find(w => w.key === 'current');
   const lastRun = [...runs].sort((a, b) => Number(b.id - a.id))[0];
-  const gpuUp = workers.some(w => w.tier === 'gpu' && w.healthy);
-  const degraded = lastRun ? lastRun.tier !== 'gpu' : !gpuUp;
   const forecastJob = jobs.find(j => j.kind === 'FORECAST' && j.status === 'CLAIMED');
 
   return (
@@ -153,12 +152,7 @@ export function BigScreen() {
           <span className={conn.isActive ? 'ok' : 'bad'}>{conn.isActive ? 'live' : 'connecting…'}</span>
         </header>
 
-        {degraded && (
-          <div className="degraded">
-            GPU OFFLINE: degraded mode. Forecasts run on CPU with {lastRun ? Number(lastRun.particles / BigInt(Math.max(lastRun.objects, 1))) : '?'} particles per
-            object; corridors are under-sampled.
-          </div>
-        )}
+        <ComputeStatusBanner placement="panel" />
 
         <section>
           <h2>Coming down next ({upcoming.length})</h2>

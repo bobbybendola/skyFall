@@ -205,6 +205,33 @@ function printStatus(conn: DbConnection): Promise<void> {
         const jobs = [...d.computeJob.iter()];
         const by = (s: string) => jobs.filter(j => j.status === s).length;
         console.log(`jobs: queued ${by('QUEUED')}, claimed ${by('CLAIMED')}, done ${by('DONE')}, failed ${by('FAILED')}`);
+        const debrisJobs = jobs.filter(j => j.kind === 'DEBRIS');
+        const byDebris = (s: string) => debrisJobs.filter(j => j.status === s).length;
+        console.log(`debris jobs: queued ${byDebris('QUEUED')}, claimed ${byDebris('CLAIMED')}, done ${byDebris('DONE')}, failed ${byDebris('FAILED')}`);
+        for (const j of debrisJobs.filter(j => j.status !== 'DONE').slice(0, 12)) {
+          console.log(`  debris job ${j.id} ${j.objectId} ${j.status} attempts ${j.attempts}${j.error ? ' ' + j.error : ''}`);
+        }
+        const nowMs = Date.now();
+        const hour72 = 72 * 3600 * 1000;
+        const nameOf = (id: string) => objs.find(o => o.id === id)?.name ?? id;
+        const forecasts = [...d.forecast.iter()];
+        const soon = forecasts
+          .filter(f => {
+            const t50 = f.tQ50?.toDate().getTime();
+            return f.status === 'ok' && f.decayedFrac >= 0.2 && t50 !== undefined && t50 - nowMs < hour72 && t50 > nowMs - 6 * 3600 * 1000;
+          })
+          .sort((a, b) => a.tQ50!.toDate().getTime() - b.tQ50!.toDate().getTime());
+        console.log(`forecasts: ${forecasts.length}; debris candidates (p>=0.2, median within 72h): ${soon.length}`);
+        for (const f of soon.slice(0, 12)) {
+          console.log(`  candidate ${f.objectId} ${nameOf(f.objectId)} p=${f.decayedFrac.toFixed(2)} t50=${f.tQ50!.toDate().toISOString()} ${f.tier}`);
+        }
+        const debris = [...d.debrisForecast.iter()];
+        console.log(`debris results: ${debris.length}`);
+        for (const row of debris) {
+          console.log(
+            `  debris ${row.objectId} ${nameOf(row.objectId)} v${row.version} ${row.tier} ${row.device} archetype=${row.archetypeId} p_any=${row.pAnySurvives.toFixed(2)} particles=${row.nParticles}`
+          );
+        }
         for (const w of d.computeStatus.iter()) {
           const age = Math.round((Date.now() - w.updatedAt.toDate().getTime()) / 1000);
           console.log(`worker ${w.worker.toHexString().slice(0, 12)}… ${w.tier} ${w.gpuName} ${w.healthy ? 'HEALTHY' : 'down'} (heartbeat ${age}s ago, ${w.variantsRunTotal} variants)`);
@@ -232,6 +259,8 @@ function printStatus(conn: DbConnection): Promise<void> {
         'SELECT * FROM corridor',
         'SELECT * FROM compute_job',
         'SELECT * FROM compute_status',
+        'SELECT * FROM forecast',
+        'SELECT * FROM debris_forecast',
         'SELECT * FROM feed_status',
         'SELECT * FROM space_weather',
         'SELECT * FROM replay_state',

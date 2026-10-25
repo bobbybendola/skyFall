@@ -1,6 +1,6 @@
 # Architecture
 
-> **Built (Oct 24 evening):** debris tables, archetypes, profiles, DEBRIS jobs chained after forecasts, `publish_debris`. Archetype data: `data/archetypes/*.json`, `data/materials.json`. Still planned: `/debris` physics (gx10-compute), catalog import, `debris_piece`.
+> **Built:** debris tables, archetypes, profiles, DEBRIS jobs chained after forecasts, `publish_debris`, and `gx10-compute` `/debris` (spheres, cylinders, boxes, plates). Archetype data: `data/archetypes/*.json`, `data/materials.json`. Still planned: catalog import, `debris_piece`. The globe shows MOCK debris until a worker publishes a row. Runbook: `docs/DEMO_RUNBOOK.md`.
 >
 > **Pivot (Oct 24):** SKYFALL now predicts **debris**: which pieces of a re-entering satellite survive, how big they are, and where they land, on a **3D globe**. Why and scope: `docs/PIVOT.md`. Physics: `docs/DEBRIS_MODEL.md`. Items marked **(planned)** are the contract for the new work; build them exactly as named here, or change this file in the same PR. Items marked **(parked)** stay in the module but are not part of the demo.
 
@@ -10,10 +10,10 @@ SpacetimeDB is not a cache or a message pipe here. The module in `spacetimedb/` 
 | Job | Lives in SpacetimeDB as |
 |---|---|
 | Who may write what | `worker_registry` + role checks in every reducer; workers approved by the operator |
-| GPU work queue, leases, retries | `compute_job` + `claim_job` / `publish_forecast` / `publish_debris` (planned) / `fail_job` + the `sweep` scheduled reducer. Two lanes per worker: one bulk job (FORECAST, DEBRIS, FRAGMENT) and one fast job (ASK, and the parked CLASSIFY/UPDATE) at a time. DEBRIS is bulk because it reuses the forecast cached in the same compute process and the compute runs one simulation at a time |
+| GPU work queue, leases, retries | `compute_job` + `claim_job` / `publish_forecast` / `publish_debris` / `fail_job` + the `sweep` scheduled reducer. Two lanes per worker: one bulk job (FORECAST, DEBRIS, FRAGMENT) and one fast job (ASK, and the parked CLASSIFY/UPDATE) at a time. DEBRIS is bulk because it reuses the forecast cached in the same compute process and the compute runs one simulation at a time |
 | GPU-to-CPU failover | `claim_job` refuses CPU workers while a healthy GPU worker exists; `sweep` requeues the jobs of silent workers |
 | Re-entry forecasts for every object | FORECAST jobs (every 20 min, on new CelesTrak elements, when Kp/F10.7 move) → `forecast`, `forecast_history`, `compute_run` |
-| Debris prediction per object (planned) | `publish_forecast` queues a DEBRIS job for every object likely to re-enter within 72 h → `debris_forecast`, `debris_component`, `debris_track` |
+| Debris prediction per object | `publish_forecast` queues a DEBRIS job for every object likely to re-enter within 72 h → `debris_forecast`, `debris_component`, `debris_track`. `request_debris` queues one object now |
 | What each satellite is made of (planned) | `satellite_profile` (from GCAT / SATCAT / DISCOSweb) + `archetype` (documented component lists) |
 | Tracked debris already in orbit (planned) | CelesTrak debris groups, stored as `reentry_object` rows with `source = DEBRIS` (fetched by `celestrak_poll`) |
 | In-orbit breakup what-if (stretch) | `fragment_event` + FRAGMENT jobs → `fragment_snapshot` |
@@ -70,7 +70,7 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `reentry_object` | `id` (`TIP-<norad>`, `CT-<norad>`, `REPLAY-<name>`) | `name`, `norad_id`, `source` (`TIP` \| `REPLAY` \| `CANDIDATE` \| `DEBRIS` (planned: tracked fragments from CelesTrak debris groups)), `window_start?`, `window_end?` (absent for `CANDIDATE`), `elements` (JSON), `status` (`PREDICTED` \| `DECAYED` \| `REPLAY` \| `CANDIDATE`), `updated_at` |
 | `sighting` (parked) | `id` (auto) | `object_id`, `lat`, `lon`, `observed_at`, `bearing_deg?`, `clip_ref?`, `reporter` (identity), `reporter_key` (identity hex, or `sim-<n>`), `mode` (`LIVE` \| `DEMO` \| `SIM`), `verdict` (`PENDING` \| `ACCEPTED` \| `HELD` \| `REJECTED`), `reason`, `p_inlier?` |
 | `reporter_stats` (parked) | `reporter_key` | `submitted`, `accepted`, `rejected`, `agreed`, `disagreed`, `last_submit_at` |
-| `compute_job` | `id` (auto) | `kind` (`FORECAST` \| `DEBRIS` (planned) \| `FRAGMENT` (stretch) \| `ASK` (planned) \| parked: `CLASSIFY`, `UPDATE`), `object_id` (`*` for a live FORECAST batch, one `REPLAY-*` id for a historical forecast, `""` for ASK), `sighting_id?`, `message_id?` (planned, ASK only), `status` (`QUEUED` \| `CLAIMED` \| `DONE` \| `FAILED`), `claimed_by?`, `claimed_at?`, `attempts`, `created_at`, `finished_at?`, `error`, `as_of?` (replay FORECAST only: the time `/forecast` is run as of, and the `computed_at` stored for that run) |
+| `compute_job` | `id` (auto) | `kind` (`FORECAST` \| `DEBRIS` \| `FRAGMENT` (stretch) \| `ASK` (planned) \| parked: `CLASSIFY`, `UPDATE`), `object_id` (`*` for a live FORECAST batch, one `REPLAY-*` id for a historical forecast, `""` for ASK), `sighting_id?`, `message_id?` (planned, ASK only), `status` (`QUEUED` \| `CLAIMED` \| `DONE` \| `FAILED`), `claimed_by?`, `claimed_at?`, `attempts`, `created_at`, `finished_at?`, `error`, `as_of?` (replay FORECAST only: the time `/forecast` is run as of, and the `computed_at` stored for that run) |
 | `corridor` (parked; forecast footprints still written here) | `object_id` | `version`, `bands` (JSON `[{level, polygon}]`), `area_km2_90`, `n_samples`, `n_sightings_used`, `computed_at`, `computed_by` |
 | `corridor_history` (parked) | `id` (auto) | `object_id`, `version`, `bands`, `area_km2_90`, `n_sightings_used`, `computed_at`, `job_ms`, `tier` |
 | `compute_status` | `worker` (identity) | `tier` (`gpu` \| `cpu`), `gpu_name`, `healthy`, `variants_run_total` (summed by the module from finished jobs), `last_job_ms`, `sightings_classified`, `updated_at` (heartbeat) |
@@ -168,7 +168,7 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 **Verified on maincloud (Oct 24, CLI 2.13):** the module publishes as `skyfall-calhacks`; procedures fetch NOAA and CelesTrak over HTTP and write in the same call; interval schedules fire about one interval after publish (so `poll` once after a fresh publish); a client reducer that throws `SenderError` rejects the caller's promise; a second worker holding the same identity is refused by `claim_job`'s lease check. Measured: sighting → new corridor on the big screen in 0.39 s (stub compute); GPU worker killed → CPU worker finished the next job 7 s later. NOAA's `10cm-flux.json` is a one-element array, not an object.
 **Verified 2026-10-25 on a local `spacetime start`:** procedure HTTP works there. `poll_feeds_now` wrote NOAA (Kp and F10.7), CelesTrak `SPECIAL=DECAYING` (69 objects), and four CelesTrak SATCAT lookups. Space-Track was not involved (the module no longer calls it). This was a throwaway local database, not maincloud.
 
-## One debris prediction, end to end (planned)
+## One debris prediction, end to end
 1. `celestrak_poll` brings new elements → `elements_history` + a FORECAST job.
 2. The GPU worker runs `/forecast` for all objects → `publish_forecast` writes `forecast`. For each object with `decayed_frac ≥ 0.2` inside 72 h it queues a DEBRIS job (coalesced per object).
 3. The worker claims each DEBRIS job (bulk lane, right after the forecast that queued it) and sends `/debris` the object's elements, `satellite_profile`, `archetype` and space weather. The compute reuses that object's cached forecast particles.
@@ -184,7 +184,7 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 Target: tap to visible change in about 2 seconds. New sightings arriving while an UPDATE runs coalesce into the next one.
 
 ## gx10-compute API
-- `POST /debris` → body `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}` → see `docs/DEBRIS_MODEL.md` §5. CUDA is required by default; `USE_GPU=0` explicitly opts into CPU-degraded mode. The SpacetimeDB DEBRIS job flow remains planned.
+- `POST /debris` → body `{object: {id, elements}, profile: {...} | null, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}` → see `docs/DEBRIS_MODEL.md` §5. CUDA is required by default; `USE_GPU=0` explicitly opts into CPU-degraded mode. The worker's DEBRIS job calls this and `publish_debris` writes the tables. The response includes `breakup` and per-component `impact` so the globe can draw landing lines.
 - `POST /fragment` (stretch) → body `{parent: {id, elements, mass_kg}, kind, params}` → fragment snapshots + decay dates
 - `POST /forecast` → body `{objects: [{id, elements (GP/OMM JSON)}], space_weather?: {kp, f107}, as_of?}` → `{results: [{id, status, t_quantiles: {"5","25","50","75","95"}, decayed_frac, bands, area_km2_90, n_samples, ess, calibrated, bc_m2_kg}], ms, device, n_per_object, horizon_days, particle_steps}`. The physics is in `services/gx10-compute/sim.py`; see `docs/SIM_SPEC.md`
 - `GET /health` → GPU name, free memory, model status, `use_gpu`, `debris_mode`, `debris_available`

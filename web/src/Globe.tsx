@@ -1,6 +1,7 @@
 // "/" page: the 3D globe. Each globe task adds its layer as one hook call in
 // <Layers> (see docs/GLOBE_TASKS.md); panels (G4) go inside <GlobeView>.
 import { useSpacetimeDB } from 'spacetimedb/react';
+import { ComputeStatusBanner, DebrisSourcePill } from './computeStatus.tsx';
 import { GlobeView, useViewer } from './globe/GlobeView.tsx';
 import { useSatelliteLayer, useTrackedObjects } from './globe/satellites.ts';
 import { useDangerLookup, useForecasted } from './globe/pointStyle.ts';
@@ -24,7 +25,7 @@ function Layers() {
   useSatelliteLayer(viewer, objects, reentry); // G1
   useClickToSelect(viewer); // G1
   useSelectedOrbit(viewer, objects); // G1
-  const debris = useSelectedDebris(objects, reentry); // shared by G2-G4 (mock until the debris tables exist)
+  const debris = useSelectedDebris(objects, reentry); // live debris_forecast, else labeled MOCK
   const debrisUi = useDebrisLines(viewer, debris); // G2: lines to landing points + impact zones
   // G3: useFallingDebris(viewer, debris)
   return (
@@ -39,16 +40,26 @@ function Layers() {
   );
 }
 
-export function Globe() {
+function Hud() {
   const conn = useSpacetimeDB();
+  const { objects, reentry } = useTrackedObjects();
+  const debris = useSelectedDebris(objects, reentry);
+  return (
+    <div className="globe-hud">
+      <b>SKYFALL</b>
+      <span className={conn.isActive ? 'ok' : 'bad'}>{conn.isActive ? ' live' : ' connecting…'}</span>
+      <DebrisSourcePill debris={debris} />
+      <a href="/2d">2D prototype</a>
+    </div>
+  );
+}
+
+export function Globe() {
   return (
     <GlobeView>
       <Layers />
-      <div className="globe-hud">
-        <b>SKYFALL</b>
-        <span className={conn.isActive ? 'ok' : 'bad'}>{conn.isActive ? ' live' : ' connecting…'}</span>
-        <a href="/2d">2D prototype</a>
-      </div>
+      <Hud />
+      <ComputeStatusBanner placement="globe" />
     </GlobeView>
   );
 }

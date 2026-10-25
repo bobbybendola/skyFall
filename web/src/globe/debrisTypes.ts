@@ -1,5 +1,5 @@
-// The /debris result shape (docs/DEBRIS_MODEL.md §5). G2/G3/G4 render this;
-// it comes from the mock (src/mock/debris.ts) until the debris_* tables exist.
+// The /debris result shape (docs/DEBRIS_MODEL.md §5). G2/G3/G4 render this.
+// Live rows come from the debris_* tables; otherwise the mock (src/mock/debris.ts).
 export type Band = { level: 50 | 90; polygon: [number, number][] }; // [lon, lat] ring
 
 export type DebrisComponent = {
@@ -27,6 +27,8 @@ export type DebrisResult = {
   id: string; // object id
   archetype: string;
   source: 'mock' | 'live';
+  tier?: string; // gpu | cpu on live rows; which machine computed this result
+  device?: string;
   n_particles: number;
   breakup: { t_unix_s: number; lat: number; lon: number; alt_km: number };
   p_any_survives: number; // any piece at all, even a harmless flake: not a danger measure
@@ -53,6 +55,12 @@ export const MATERIAL_COLOR: Record<string, string> = {
   Inconel: '#c9b48a', // nickel alloy (engine parts): tan
 };
 export const OTHER_MATERIAL_COLOR = '#b07cff';
+
+/** Glance label for the result on screen: LIVE (GPU or CPU) or MOCK. */
+export function debrisSourceTag(d: DebrisResult): { live: boolean; text: string } {
+  if (d.source !== 'live') return { live: false, text: 'DEBRIS MOCK' };
+  return { live: true, text: `DEBRIS LIVE · ${d.tier === 'cpu' ? 'CPU' : 'GPU'}` };
+}
 
 /** Headline danger line, e.g. "~15 dangerous pieces (>15 J)". Falls back to the old
  * any-piece number for runs made before the hazard fields existed. */

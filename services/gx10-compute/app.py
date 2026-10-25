@@ -66,7 +66,7 @@ class ForecastIn(BaseModel):
 
 class DebrisIn(BaseModel):
     object: ForecastObject
-    profile: dict
+    profile: dict | None = None  # worker sends null when satellite_profile has no row yet
     archetype: dict
     space_weather: dict | None = None
     n_particles: int | None = None
@@ -274,7 +274,7 @@ def debris(body: DebrisIn) -> dict:
 
             result = predict_debris(
                 object_id=obj["id"],
-                profile=body.profile,
+                profile=body.profile or {},
                 archetype=body.archetype,
                 r_reentry=state.r_re[valid],
                 v_reentry=state.v_re[valid],
