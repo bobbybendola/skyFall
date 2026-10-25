@@ -260,3 +260,34 @@ def test_hazard_metrics_consistent():
         assert 0 <= c['p_hazard'] <= c['p_survive'] + 1e-9
     if hz['p_any'] == 0:
         assert out['casualty_area_m2']['mean'] == 0
+
+
+def test_hazard_grid_counts_runs_per_cell():
+    lat = np.array([[10.2, 10.7, -5.5], [10.4, 50.0, -5.1], [0.0, 0.0, 0.0]])
+    lon = np.array([[179.6, 179.9, 20.0], [-179.5, 3.0, 20.5], [0.0, 0.0, 0.0]])
+    hz = np.array([[True, True, True], [True, False, True], [False, False, False]])
+    g = dm.hazard_grid(lat, lon, hz)
+    cells = {(c[0], c[1]): c[2] for c in g['cells']}
+    assert g['n_runs'] == 3
+    assert cells[(10.0, 179.0)] == 1  # two pieces of run 0 in one cell count once
+    assert cells[(10.0, -180.0)] == 1  # lon -179.5 wraps into the cell west edge -180
+    assert cells[(-6.0, 20.0)] == 2
+    assert (50.0, 3.0) not in cells  # not dangerous
+
+
+def test_hazard_grid_in_result():
+    arche = json.loads((HERE / 'fixtures' / 'test-flatpanel.json').read_text())
+    out = run(arche['components'], n=30)
+    g = out['hazard_grid']
+    assert g['n_runs'] == 30 and g['cell_deg'] == 1.0
+    assert all(0 < c[2] <= 30 for c in g['cells'])
+    if out['hazard']['p_any'] > 0:
+        assert g['cells']
+
+
+def test_hazard_grid_keeps_highest_cells():
+    lat = np.array([[1.5, 2.5, 3.5], [1.5, 2.5, 60.0]])
+    lon = np.zeros((2, 3))
+    g = dm.hazard_grid(lat, lon, np.ones((2, 3), bool), max_cells=2)
+    assert g['truncated'] and len(g['cells']) == 2
+    assert {c[0] for c in g['cells']} == {1.0, 2.0}  # the two cells hit in both runs
