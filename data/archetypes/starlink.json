@@ -6,14 +6,16 @@
   "sources": [
     "Total mass ~260-310 kg for v1.0/v1.5: public SpaceX/FCC-reported figures (CHECK exact source before quoting)",
     "Flat-panel bus + single large solar array, krypton/argon Hall thruster: public SpaceX descriptions (CHECK)",
-    "SpaceX states Starlink satellites are designed to fully demise; a 2023 FAA report disputed this (CHECK both sources). Component masses below are ASSUMED, not from SpaceX"
+    "SpaceX states Starlink satellites are designed to fully demise; a 2023 FAA report disputed this (CHECK both sources). Component masses below are ASSUMED, not from SpaceX",
+    "REVISED 2026-10-25: v1 modeled the bus as one 150 kg solid block (the lumped-mass model heats it as one piece, so it always survived) and the parts summed to ~341 kg, over the 260-310 kg total. Now the bus is 4 Al honeycomb panels + 6 avionics boxes, ~251 kg (catalog-mass scaling adds the rest to the panels). All component masses still ASSUMED"
   ],
   "components": [
-    {"name": "flat-panel bus",     "material": "Al6061",  "shape": "box",      "mass_kg": 150, "dims_m": [2.8, 1.4, 0.2], "count": 1, "parent": null},
+    {"name": "bus structure panel", "material": "Al6061",  "shape": "plate",    "mass_kg": 20,  "dims_m": [1.4, 1.4, 0.025], "count": 4, "parent": null, "_note": "flat-panel bus as Al honeycomb panels (ASSUMED split)"},
     {"name": "solar array",        "material": "CFRP",    "shape": "plate",    "mass_kg": 45,  "dims_m": [8.0, 2.8, 0.03], "count": 1, "parent": null},
-    {"name": "phased-array panels","material": "Al6061",  "shape": "plate",    "mass_kg": 30,  "dims_m": [1.2, 0.6, 0.05], "count": 4, "parent": "flat-panel bus"},
-    {"name": "reaction wheel",     "material": "SS304",   "shape": "cylinder", "mass_kg": 2.0, "dims_m": [0.07, 0.18], "count": 4, "parent": "flat-panel bus"},
-    {"name": "thruster propellant tank", "material": "CFRP", "shape": "cylinder", "mass_kg": 6.0, "dims_m": [0.6, 0.25], "count": 1, "parent": "flat-panel bus", "_note": "composite-overwrapped tank ASSUMED"},
-    {"name": "battery pack",       "material": "Copper",  "shape": "box",      "mass_kg": 12,  "dims_m": [0.4, 0.3, 0.15], "count": 1, "parent": "flat-panel bus"}
+    {"name": "phased-array panels","material": "Al6061",  "shape": "plate",    "mass_kg": 10,  "dims_m": [1.2, 0.6, 0.05], "count": 4, "parent": null},
+    {"name": "avionics box",       "material": "Al6061",  "shape": "box",      "mass_kg": 10,  "dims_m": [0.4, 0.3, 0.15], "count": 6, "parent": "bus structure panel", "_note": "electronics enclosures ASSUMED"},
+    {"name": "reaction wheel",     "material": "SS304",   "shape": "cylinder", "mass_kg": 2.0, "dims_m": [0.07, 0.18], "count": 4, "parent": "bus structure panel"},
+    {"name": "thruster propellant tank", "material": "CFRP", "shape": "cylinder", "mass_kg": 6.0, "dims_m": [0.6, 0.25], "count": 1, "parent": "bus structure panel", "_note": "composite-overwrapped tank ASSUMED"},
+    {"name": "battery pack",       "material": "Copper",  "shape": "box",      "mass_kg": 12,  "dims_m": [0.4, 0.3, 0.15], "count": 1, "parent": "bus structure panel"}
   ]
 }
