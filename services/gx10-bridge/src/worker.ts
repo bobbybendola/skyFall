@@ -154,7 +154,7 @@ function checkForMyJob(): void {
 
 // ---------------------------------------------------------------- jobs
 
-type Job = { id: bigint; kind: string; objectId: string; sightingId?: bigint; attempts: number };
+type Job = { id: bigint; kind: string; objectId: string; sightingId?: bigint; attempts: number; asOf?: Timestamp };
 
 async function run(job: Job): Promise<void> {
   const lane = laneOf(job.kind);
@@ -198,19 +198,23 @@ function trustOf(reporterKey: string): number {
 
 const isGp = (el: any) => el && typeof el === 'object' && 'MEAN_MOTION' in el && 'EPOCH' in el;
 
-// All objects with real orbit elements, forecast in one GPU batch.
+// Live batch: every GP object except REPLAY (those run as their own job, as of a past date).
+// Replay job: that one object, with as_of so SGP4 starts from the historical epoch.
 async function runForecast(job: Job, t0: number): Promise<void> {
+  const replayOne = job.objectId !== '*';
   const objects = [...conn.db.reentryObject.iter()]
+    .filter(o => (replayOne ? o.id === job.objectId : o.source !== 'REPLAY'))
     .map(o => ({ id: o.id, elements: JSON.parse(o.elements) }))
     .filter(o => isGp(o.elements));
-  if (objects.length === 0) throw new Error('no objects with orbit elements');
+  if (objects.length === 0) throw new Error(replayOne ? 'replay object has no orbit elements' : 'no objects with orbit elements');
   const sw = conn.db.spaceWeather.key.find('current');
-  log(`forecast: ${objects.length} objects on ${gpuName}...`);
-  const out = await post(
-    '/forecast',
-    { objects, space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null },
-    BULK_TIMEOUT_MS
-  );
+  const body: Record<string, unknown> = {
+    objects,
+    space_weather: sw ? { kp: sw.kp ?? null, f107: sw.f107 ?? null } : null,
+  };
+  if (job.asOf) body.as_of = iso(job.asOf);
+  log(`forecast: ${objects.length} objects on ${gpuName}${job.asOf ? ` as of ${iso(job.asOf)}` : ''}...`);
+  const out = await post('/forecast', body, BULK_TIMEOUT_MS);
   await conn.reducers.publishForecast({
     jobId: job.id,
     results: JSON.stringify(out.results),

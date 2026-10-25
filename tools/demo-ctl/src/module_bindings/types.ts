@@ -39,6 +39,7 @@ export const ComputeJob = __t.object("ComputeJob", {
   createdAt: __t.timestamp(),
   finishedAt: __t.option(__t.timestamp()),
   error: __t.string(),
+  asOf: __t.option(__t.timestamp()),
 });
 export type ComputeJob = __Infer<typeof ComputeJob>;
 
@@ -109,6 +110,7 @@ export const DebrisComponent = __t.object("DebrisComponent", {
   impactLat: __t.option(__t.f64()),
   impactLon: __t.option(__t.f64()),
   footprint: __t.string(),
+  pHazard: __t.f64(),
 });
 export type DebrisComponent = __Infer<typeof DebrisComponent>;
 
@@ -129,6 +131,11 @@ export const DebrisForecast = __t.object("DebrisForecast", {
   device: __t.string(),
   computedAt: __t.timestamp(),
   note: __t.string(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
+  hazardPiecesP95: __t.f64(),
+  survivingMassFrac: __t.f64(),
+  hazardGrid: __t.string(),
 });
 export type DebrisForecast = __Infer<typeof DebrisForecast>;
 
@@ -141,6 +148,8 @@ export const DebrisHistory = __t.object("DebrisHistory", {
   areaKm290: __t.f64(),
   tier: __t.string(),
   computedAt: __t.timestamp(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
 });
 export type DebrisHistory = __Infer<typeof DebrisHistory>;
 
@@ -209,6 +218,24 @@ export const ForecastHistory = __t.object("ForecastHistory", {
 });
 export type ForecastHistory = __Infer<typeof ForecastHistory>;
 
+export const ForecastScore = __t.object("ForecastScore", {
+  id: __t.u64(),
+  noradId: __t.u32(),
+  objectId: __t.string(),
+  forecastHistoryId: __t.option(__t.u64()),
+  status: __t.string(),
+  hoursError: __t.option(__t.f64()),
+  insideWindow: __t.option(__t.bool()),
+  findHits: __t.string(),
+  leadTimeHours: __t.option(__t.f64()),
+  calibrated: __t.bool(),
+  replay: __t.bool(),
+  source: __t.string(),
+  forecastComputedAt: __t.option(__t.timestamp()),
+  scoredAt: __t.timestamp(),
+});
+export type ForecastScore = __Infer<typeof ForecastScore>;
+
 export const MySightings = __t.object("MySightings", {});
 export type MySightings = __Infer<typeof MySightings>;
 
@@ -229,6 +256,19 @@ export const ObjectPosition = __t.object("ObjectPosition", {
 });
 export type ObjectPosition = __Infer<typeof ObjectPosition>;
 
+export const OutcomeProbe = __t.object("OutcomeProbe", {
+  noradId: __t.u32(),
+  checkedAt: __t.timestamp(),
+  decayFound: __t.bool(),
+});
+export type OutcomeProbe = __Infer<typeof OutcomeProbe>;
+
+export const OutcomeTick = __t.object("OutcomeTick", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type OutcomeTick = __Infer<typeof OutcomeTick>;
+
 export const PositionTick = __t.object("PositionTick", {
   scheduledId: __t.u64(),
   scheduledAt: __t.scheduleAt(),
@@ -247,6 +287,19 @@ export const ReentryObject = __t.object("ReentryObject", {
   updatedAt: __t.timestamp(),
 });
 export type ReentryObject = __Infer<typeof ReentryObject>;
+
+export const ReentryOutcome = __t.object("ReentryOutcome", {
+  noradId: __t.u32(),
+  objectId: __t.string(),
+  name: __t.string(),
+  decayAt: __t.timestamp(),
+  source: __t.string(),
+  finds: __t.string(),
+  note: __t.string(),
+  replay: __t.bool(),
+  updatedAt: __t.timestamp(),
+});
+export type ReentryOutcome = __Infer<typeof ReentryOutcome>;
 
 export const ReplaySighting = __t.object("ReplaySighting", {
   id: __t.u64(),

@@ -22,4 +22,5 @@ export default __t.row({
   createdAt: __t.timestamp().name("created_at"),
   finishedAt: __t.option(__t.timestamp()).name("finished_at"),
   error: __t.string(),
+  asOf: __t.option(__t.timestamp()).name("as_of"),
 });

@@ -3,14 +3,19 @@
 // Everything that coordinates the project lives here: the sighting rules,
 // reporter trust, the GPU job queue with leases and failover, corridor
 // history, the replay clock that emits simulated sightings, worker health,
-// and the public-feed fetchers (NOAA SWPC, CelesTrak) as scheduled
-// procedures. Workers and screens are thin clients around it.
+// and the public-feed fetchers (NOAA SWPC, CelesTrak GP and SATCAT decay
+// dates, Space-Track only when database env credentials exist) as scheduled
+// procedures. Forecasts are scored against official decay times in
+// forecast_score. Workers and screens are thin clients around it.
 //
 // TS uses camelCase; SpacetimeDB's default case policy stores snake_case
 // (submitSighting -> submit_sighting, objectId -> object_id).
 import { schema, table, t, SenderError, ScheduleAt } from 'spacetimedb/server';
 import { Identity, Timestamp, TimeDuration } from 'spacetimedb';
 import { eciToGeodetic, degreesLat, degreesLong, gstime, json2satrec, propagate, type SatRec } from 'satellite.js';
+
+// The module host provides console. This package's tsconfig has no DOM lib.
+declare const console: { log: (message: string) => void };
 
 // ============================================================ config
 
@@ -20,6 +25,19 @@ const REPLAY_TICK_EVERY = 1n * SEC;
 const NOAA_EVERY = 15n * 60n * SEC;
 const CELESTRAK_EVERY = 2n * 3600n * SEC;
 const CELESTRAK_MIN_GAP = 2n * 3600n * SEC; // CelesTrak 403s repeat downloads inside one update
+const OUTCOME_EVERY = 6n * 3600n * SEC; // SATCAT decay dates + optional Space-Track
+const SATCAT_MIN_GAP = 2n * 3600n * SEC;
+const SATCAT_BATCH = 4; // SATCAT CATNR is one object per request; stay well under a retry loop
+const SATCAT_PROBE_EVERY = 24n * 3600n * SEC;
+const HOUR_US = 3_600_000_000; // microseconds in an hour
+const OUTCOME_SOURCES = ['CELESTRAK_SATCAT', 'SPACETRACK_DECAY', 'SPACETRACK_TIP', 'OPERATOR'];
+// Higher wins. A feed must not overwrite a better official time, or an operator correction.
+const OUTCOME_RANK: Record<string, number> = {
+  SPACETRACK_TIP: 1,
+  CELESTRAK_SATCAT: 2,
+  SPACETRACK_DECAY: 3,
+  OPERATOR: 4,
+};
 const LEASE = 60n * SEC; // fast lane (CLASSIFY/UPDATE). Failover is faster: sweep requeues jobs of workers whose heartbeat stopped
 const LEASE_BULK = 15n * 60n * SEC; // bulk lane (FORECAST, DEBRIS); a dead worker's job is requeued sooner by sweep
 const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
@@ -110,6 +128,9 @@ const computeJob = table(
     createdAt: t.timestamp(),
     finishedAt: t.timestamp().optional(),
     error: t.string(),
+    // Set only on a single-object replay FORECAST. publish_forecast stores this
+    // as the forecast's computed_at, and the worker passes it to /forecast as as_of.
+    asOf: t.timestamp().optional().default(undefined), // default: existing rows get none
   }
 );
 
@@ -401,6 +422,56 @@ const replaySighting = table(
   }
 );
 
+// Official decay for one NORAD id, plus any reported find points.
+// finds is JSON [{lat, lon, note}]. replay=true is a historical case.
+const reentryOutcome = table(
+  { public: true },
+  {
+    noradId: t.u32().primaryKey(),
+    objectId: t.string(),
+    name: t.string(),
+    decayAt: t.timestamp(),
+    source: t.string(), // CELESTRAK_SATCAT | SPACETRACK_DECAY | SPACETRACK_TIP | OPERATOR
+    finds: t.string(),
+    note: t.string(),
+    replay: t.bool(),
+    updatedAt: t.timestamp(),
+  }
+);
+
+// One row each time an outcome is written or a matching forecast is published.
+// The latest row per norad_id is the current score. See docs/ARCHITECTURE.md
+// for calibrated, hours_error and lead_time_hours.
+const forecastScore = table(
+  { public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    noradId: t.u32().index('btree'),
+    objectId: t.string(),
+    forecastHistoryId: t.u64().optional(),
+    status: t.string(), // scored | no_forecast
+    hoursError: t.f64().optional(),
+    insideWindow: t.bool().optional(),
+    findHits: t.string(), // JSON [{lat, lon, note, inside}] ; inside is null when there is no 90% corridor
+    leadTimeHours: t.f64().optional(),
+    calibrated: t.bool(),
+    replay: t.bool(),
+    source: t.string(),
+    forecastComputedAt: t.timestamp().optional(),
+    scoredAt: t.timestamp(),
+  }
+);
+
+// Which archived NORAD ids we already asked CelesTrak SATCAT about.
+const outcomeProbe = table(
+  { public: false },
+  {
+    noradId: t.u32().primaryKey(),
+    checkedAt: t.timestamp(),
+    decayFound: t.bool(),
+  }
+);
+
 const workerRegistry = table(
   { public: false },
   {
@@ -444,6 +515,10 @@ const celestrakTick = table(
   { public: false },
   { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
 );
+const outcomeTick = table(
+  { public: false },
+  { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
+);
 const positionTick = table(
   { public: false },
   { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
@@ -470,12 +545,16 @@ const spacetimedb = schema({
   debrisHistory,
   elementsHistory,
   computeRun,
+  reentryOutcome,
+  forecastScore,
+  outcomeProbe,
   replaySighting,
   workerRegistry,
   sweepTick,
   replayTick,
   noaaTick,
   celestrakTick,
+  outcomeTick,
   objectPosition,
   positionTick,
 });
@@ -483,7 +562,12 @@ export default spacetimedb;
 
 // ============================================================ helpers
 // Loosely typed so they accept any reducer/transaction context.
-type AnyCtx = { db: any; sender: Identity; timestamp: Timestamp; databaseIdentity: Identity };
+type AnyCtx = {
+  db: any;
+  sender: Identity;
+  timestamp: Timestamp;
+  databaseIdentity: Identity;
+};
 
 const micros = (ts: Timestamp): bigint => ts.microsSinceUnixEpoch;
 const olderThan = (ctx: AnyCtx, ts: Timestamp | undefined, age: bigint): boolean =>
@@ -541,10 +625,12 @@ function enqueueUpdate(ctx: AnyCtx, objectId: string): void {
     createdAt: ctx.timestamp,
     finishedAt: undefined,
     error: '',
+    asOf: undefined,
   });
 }
 
 // One FORECAST job covers every tracked and candidate object (one GPU batch).
+// Replay objects are skipped by the worker on this job; they have their own.
 function enqueueForecast(ctx: AnyCtx): void {
   for (const j of ctx.db.computeJob.objectId.filter('*')) {
     if (j.kind === 'FORECAST' && j.status === 'QUEUED') return;
@@ -561,6 +647,28 @@ function enqueueForecast(ctx: AnyCtx): void {
     createdAt: ctx.timestamp,
     finishedAt: undefined,
     error: '',
+    asOf: undefined,
+  });
+}
+
+// Historical case: forecast one REPLAY object as of `asOf`, not as of now.
+function enqueueReplayForecast(ctx: AnyCtx, objectId: string, asOf: Timestamp): void {
+  for (const j of ctx.db.computeJob.objectId.filter(objectId)) {
+    if (j.kind === 'FORECAST' && (j.status === 'QUEUED' || j.status === 'CLAIMED')) return;
+  }
+  ctx.db.computeJob.insert({
+    id: 0n,
+    kind: 'FORECAST',
+    objectId,
+    sightingId: undefined,
+    status: 'QUEUED',
+    claimedBy: undefined,
+    claimedAt: undefined,
+    attempts: 0,
+    createdAt: ctx.timestamp,
+    finishedAt: undefined,
+    error: '',
+    asOf,
   });
 }
 
@@ -587,6 +695,7 @@ function enqueueDebris(ctx: AnyCtx, objectId: string): void {
     createdAt: ctx.timestamp,
     finishedAt: undefined,
     error: '',
+    asOf: undefined,
   });
 }
 
@@ -714,6 +823,7 @@ function insertSighting(
       createdAt: ctx.timestamp,
       finishedAt: undefined,
       error: '',
+      asOf: undefined,
     });
   } else {
     // No clip to check: accept on position, let the corridor job weigh it.
@@ -764,8 +874,10 @@ function writeCorridor(
   nSamples: number,
   nSightingsUsed: number,
   jobMs: number,
-  tier: string
+  tier: string,
+  issuedAt?: Timestamp
 ): void {
+  const at = issuedAt ?? ctx.timestamp;
   const prev = ctx.db.corridor.objectId.find(objectId);
   const version = prev ? prev.version + 1 : 1;
   const row = {
@@ -775,7 +887,7 @@ function writeCorridor(
     areaKm2_90,
     nSamples,
     nSightingsUsed,
-    computedAt: ctx.timestamp,
+    computedAt: at,
     computedBy: ctx.sender,
   };
   if (prev) ctx.db.corridor.objectId.update(row);
@@ -787,7 +899,7 @@ function writeCorridor(
     bands,
     areaKm2_90,
     nSightingsUsed,
-    computedAt: ctx.timestamp,
+    computedAt: at,
     jobMs,
     tier,
   });
@@ -814,13 +926,20 @@ export const init = spacetimedb.init(ctx => {
   ctx.db.noaaTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(NOAA_EVERY) });
   ctx.db.celestrakTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(CELESTRAK_EVERY) });
   ensurePositionTick(ctx);
+  ensureOutcomeTick(ctx);
 });
 
-// init only runs on a database's first publish; sweep calls this too so an
-// updated (not wiped) database starts the position timer.
+// init only runs on a database's first publish; sweep calls these too so an
+// updated (not wiped) database starts the newer timers.
 function ensurePositionTick(ctx: AnyCtx): void {
   if (ctx.db.positionTick.iter().next().done) {
     ctx.db.positionTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(POSITION_TICK) });
+  }
+}
+
+function ensureOutcomeTick(ctx: AnyCtx): void {
+  if (ctx.db.outcomeTick.iter().next().done) {
+    ctx.db.outcomeTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(OUTCOME_EVERY) });
   }
 }
 
@@ -1009,6 +1128,374 @@ export const celestrakPoll = spacetimedb.procedure(
   }
 );
 
+// ============================================================ forecast validation
+// Official decay times live in reentry_outcome. forecast_score compares the
+// latest forecast issued before that time. Nothing here is invented: a missing
+// forecast is status no_forecast, and missing quantiles stay empty.
+
+const SATCAT_NOTE =
+  'CelesTrak SATCAT DECAY_DATE is a calendar date with no time of day. Stored as 00:00:00Z, so hours error is coarse to about a day. https://celestrak.org/satcat/records.php';
+
+function hoursBetween(later: Timestamp, earlier: Timestamp): number {
+  return Number(micros(later) - micros(earlier)) / HOUR_US;
+}
+
+function sameTime(a: Timestamp, b: Timestamp): boolean {
+  return micros(a) === micros(b);
+}
+
+function parseUtcDate(s: string): Timestamp | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+  if (!m) return undefined;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  if (d.getUTCFullYear() !== Number(m[1]) || d.getUTCMonth() + 1 !== Number(m[2]) || d.getUTCDate() !== Number(m[3])) {
+    return undefined;
+  }
+  return Timestamp.fromDate(d);
+}
+
+function parseUtcDateTime(s: string): Timestamp | undefined {
+  const t = s.trim();
+  if (!t) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return parseUtcDate(t);
+  let iso = t.includes('T') ? t : t.replace(' ', 'T');
+  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso)) iso += 'Z';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return Timestamp.fromDate(d);
+}
+
+function parseFinds(json: string): { lat: number; lon: number; note: string }[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json || '[]');
+  } catch {
+    throw new SenderError('finds must be a JSON array');
+  }
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) throw new SenderError('finds must be a JSON array');
+  if (raw.length > 20) throw new SenderError('at most 20 find points');
+  return raw.map(item => {
+    const f = item as { lat?: unknown; lon?: unknown; note?: unknown };
+    const lat = Number(f.lat);
+    const lon = Number(f.lon);
+    if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) throw new SenderError('find lat/lon out of range');
+    return { lat, lon, note: String(f.note ?? '').slice(0, 200) };
+  });
+}
+
+function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = Number(ring[i]?.[0]);
+    const yi = Number(ring[i]?.[1]);
+    const xj = Number(ring[j]?.[0]);
+    const yj = Number(ring[j]?.[1]);
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+    if (yi > lat === yj > lat) continue;
+    const denom = yj - yi;
+    if (denom === 0) continue;
+    if (lon < ((xj - xi) * (lat - yi)) / denom + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// level 90 is what gx10-compute writes. 0.9 is accepted so a hand-written band still counts.
+function inside90(bandsJson: string, lat: number, lon: number): boolean {
+  let bands: any[] = [];
+  try {
+    const parsed = JSON.parse(bandsJson);
+    if (Array.isArray(parsed)) bands = parsed;
+  } catch {
+    return false;
+  }
+  for (const b of bands) {
+    const level = Number(b?.level);
+    if (level !== 90 && level !== 0.9) continue;
+    if (!Array.isArray(b?.polygon)) continue;
+    if (pointInRing(lon, lat, b.polygon)) return true;
+  }
+  return false;
+}
+
+function findHitsJson(findsJson: string, bandsJson: string | undefined): string {
+  let finds: any[] = [];
+  try {
+    const parsed = JSON.parse(findsJson || '[]');
+    if (Array.isArray(parsed)) finds = parsed;
+  } catch {
+    finds = [];
+  }
+  return JSON.stringify(
+    finds.map(f => {
+      const lat = Number(f?.lat);
+      const lon = Number(f?.lon);
+      const note = String(f?.note ?? '').slice(0, 200);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || bandsJson === undefined) {
+        return { lat, lon, note, inside: null };
+      }
+      return { lat, lon, note, inside: inside90(bandsJson, lat, lon) };
+    })
+  );
+}
+
+function corridorBandsFor(ctx: AnyCtx, objectId: string, version: number, computedAt: Timestamp): string | undefined {
+  const want = micros(computedAt);
+  let fallback: string | undefined;
+  for (const c of ctx.db.corridorHistory.objectId.filter(objectId)) {
+    if (micros(c.computedAt) !== want) continue;
+    if (c.version === version) return c.bands;
+    fallback = c.bands;
+  }
+  return fallback;
+}
+
+function latestForecastBefore(ctx: AnyCtx, outcome: { noradId: number; objectId: string; decayAt: Timestamp }): any {
+  const ids = new Set<string>();
+  if (outcome.objectId) ids.add(outcome.objectId);
+  for (const o of ctx.db.reentryObject.iter()) {
+    if (Number(o.noradId) === Number(outcome.noradId)) ids.add(o.id);
+  }
+  const decay = micros(outcome.decayAt);
+  let best: any = null;
+  for (const id of ids) {
+    for (const h of ctx.db.forecastHistory.objectId.filter(id)) {
+      if (micros(h.computedAt) >= decay) continue;
+      const newer = !best || micros(h.computedAt) > micros(best.computedAt);
+      const tie =
+        best &&
+        micros(h.computedAt) === micros(best.computedAt) &&
+        outcome.objectId !== '' &&
+        h.objectId === outcome.objectId &&
+        best.objectId !== outcome.objectId;
+      if (newer || tie) best = h;
+    }
+  }
+  return best;
+}
+
+function scoreIsReplay(ctx: AnyCtx, outcome: { replay: boolean; objectId: string }, forecastObjectId: string): boolean {
+  if (outcome.replay) return true;
+  for (const id of [outcome.objectId, forecastObjectId]) {
+    if (!id) continue;
+    const o = ctx.db.reentryObject.id.find(id);
+    if (o && (o.source === 'REPLAY' || o.status === 'REPLAY')) return true;
+  }
+  return false;
+}
+
+// Append a score. Does not invent hours, a window, or a hit when the inputs are missing.
+function scoreOutcome(ctx: AnyCtx, outcome: any): void {
+  const best = latestForecastBefore(ctx, outcome);
+  if (!best) {
+    ctx.db.forecastScore.insert({
+      id: 0n,
+      noradId: outcome.noradId,
+      objectId: outcome.objectId || '',
+      forecastHistoryId: undefined,
+      status: 'no_forecast',
+      hoursError: undefined,
+      insideWindow: undefined,
+      findHits: findHitsJson(outcome.finds || '[]', undefined),
+      leadTimeHours: undefined,
+      calibrated: false,
+      replay: scoreIsReplay(ctx, outcome, ''),
+      source: outcome.source,
+      forecastComputedAt: undefined,
+      scoredAt: ctx.timestamp,
+    });
+    return;
+  }
+  const bands = corridorBandsFor(ctx, best.objectId, best.version, best.computedAt);
+  let insideWindow: boolean | undefined;
+  let calibrated = false;
+  if (best.tQ05 && best.tQ95) {
+    const decay = micros(outcome.decayAt);
+    insideWindow = decay >= micros(best.tQ05) && decay <= micros(best.tQ95);
+    calibrated = insideWindow;
+  }
+  ctx.db.forecastScore.insert({
+    id: 0n,
+    noradId: outcome.noradId,
+    objectId: best.objectId,
+    forecastHistoryId: best.id,
+    status: 'scored',
+    hoursError: best.tQ50 ? hoursBetween(best.tQ50, outcome.decayAt) : undefined,
+    insideWindow,
+    findHits: findHitsJson(outcome.finds || '[]', bands),
+    leadTimeHours: hoursBetween(outcome.decayAt, best.computedAt),
+    calibrated,
+    replay: scoreIsReplay(ctx, outcome, best.objectId),
+    source: outcome.source,
+    forecastComputedAt: best.computedAt,
+    scoredAt: ctx.timestamp,
+  });
+}
+
+function autoOutcome(
+  ctx: AnyCtx,
+  next: { noradId: number; objectId: string; name: string; decayAt: Timestamp; source: string; note: string }
+): boolean {
+  const prev = ctx.db.reentryOutcome.noradId.find(next.noradId);
+  if (prev && (OUTCOME_RANK[prev.source] ?? 0) > (OUTCOME_RANK[next.source] ?? 0)) return false;
+  const row = {
+    noradId: next.noradId,
+    objectId: next.objectId || prev?.objectId || '',
+    name: (next.name || prev?.name || '').slice(0, 120),
+    decayAt: next.decayAt,
+    source: next.source,
+    finds: prev?.finds ?? '[]',
+    note: next.note.slice(0, 500),
+    replay: prev?.replay ?? false,
+    updatedAt: ctx.timestamp,
+  };
+  if (
+    prev &&
+    prev.source === row.source &&
+    sameTime(prev.decayAt, row.decayAt) &&
+    prev.note === row.note &&
+    prev.objectId === row.objectId &&
+    prev.name === row.name
+  ) {
+    return false;
+  }
+  if (prev) ctx.db.reentryOutcome.noradId.update(row);
+  else ctx.db.reentryOutcome.insert(row);
+  scoreOutcome(ctx, row);
+  return true;
+}
+
+type ArchivedNorad = { noradId: number; objectId: string; name: string };
+
+function archivedNorads(ctx: AnyCtx): ArchivedNorad[] {
+  const byId = new Map<number, ArchivedNorad>();
+  const rank = (id: string) => (id.startsWith('TIP-') ? 3 : id.startsWith('CT-') ? 2 : id.startsWith('REPLAY-') ? 0 : 1);
+  for (const h of ctx.db.elementsHistory.iter()) {
+    let norad = 0;
+    let name = '';
+    try {
+      const el = JSON.parse(h.elements);
+      norad = Math.trunc(Number(el.NORAD_CAT_ID));
+      name = String(el.OBJECT_NAME ?? '');
+    } catch {
+      /* not JSON elements */
+    }
+    if (!Number.isInteger(norad) || norad <= 0) {
+      const m = /^(?:TIP|CT)-(\d+)$/.exec(h.objectId);
+      if (m) norad = Number(m[1]);
+    }
+    if (!Number.isInteger(norad) || norad <= 0 || norad > 0xffffffff) continue;
+    const prev = byId.get(norad);
+    if (!prev || rank(h.objectId) > rank(prev.objectId)) byId.set(norad, { noradId: norad, objectId: h.objectId, name: name || prev?.name || '' });
+    else if (!prev.name && name) prev.name = name;
+  }
+  return [...byId.values()].sort((a, b) => a.noradId - b.noradId);
+}
+
+function feedGapOpen(ctx: AnyCtx, feed: string, gap: bigint): boolean {
+  const prev = ctx.db.feedStatus.feed.find(feed);
+  return !prev || olderThan(ctx, prev.lastAttemptAt, gap);
+}
+
+function hasGpElements(elementsJson: string): boolean {
+  try {
+    const el = JSON.parse(elementsJson);
+    return !!el && typeof el === 'object' && 'MEAN_MOTION' in el && 'EPOCH' in el;
+  } catch {
+    return false;
+  }
+}
+
+function markProbe(ctx: AnyCtx, noradId: number, decayFound: boolean): void {
+  const row = { noradId, checkedAt: ctx.timestamp, decayFound };
+  if (ctx.db.outcomeProbe.noradId.find(noradId)) ctx.db.outcomeProbe.noradId.update(row);
+  else ctx.db.outcomeProbe.insert(row);
+}
+
+// SATCAT has no multi-id query (one CATNR per request). At most SATCAT_BATCH
+// archived objects per 2 h, and each id at most once a day. Space-Track is not
+// fetched here: its login stays on Steven's machine, and the feed-poller sends
+// its decay/TIP rows through report_outcome (role poller).
+function pollOutcomes(ctx: any): void {
+  const plan: { archived: ArchivedNorad[]; batch: ArchivedNorad[] } = ctx.withTx((tx: AnyCtx) => {
+    const archived = archivedNorads(tx);
+    const satcatDue = feedGapOpen(tx, 'celestrak_satcat', SATCAT_MIN_GAP);
+    const batch = satcatDue
+      ? archived
+          .filter(o => {
+            const probe = tx.db.outcomeProbe.noradId.find(o.noradId);
+            return !probe || olderThan(tx, probe.checkedAt, SATCAT_PROBE_EVERY);
+          })
+          .slice(0, SATCAT_BATCH)
+      : [];
+    return { archived, batch };
+  });
+
+  const satcatRows: { noradId: number; name: string; decay: string }[] = [];
+  let satcatErr = '';
+  let satcatChecked = 0;
+  for (const item of plan.batch) {
+    try {
+      const r = ctx.http.fetch(`https://celestrak.org/satcat/records.php?CATNR=${item.noradId}&FORMAT=json`, {
+        timeout: TimeDuration.fromMillis(10000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const body = r.json();
+      const rec = Array.isArray(body) ? body[0] : undefined;
+      satcatChecked++;
+      satcatRows.push({
+        noradId: item.noradId,
+        name: String(rec?.OBJECT_NAME ?? item.name ?? ''),
+        decay: String(rec?.DECAY_DATE ?? '').trim(),
+      });
+    } catch (e) {
+      satcatErr = String(e).slice(0, 200);
+      break;
+    }
+  }
+
+  ctx.withTx((tx: AnyCtx) => {
+    const byNorad = new Map(plan.archived.map(o => [o.noradId, o]));
+    let wrote = 0;
+    for (const row of satcatRows) {
+      const known = byNorad.get(row.noradId);
+      const decayAt = row.decay ? parseUtcDate(row.decay) : undefined;
+      markProbe(tx, row.noradId, !!decayAt);
+      if (!decayAt) continue;
+      if (
+        autoOutcome(tx, {
+          noradId: row.noradId,
+          objectId: known?.objectId ?? '',
+          name: row.name,
+          decayAt,
+          source: 'CELESTRAK_SATCAT',
+          note: SATCAT_NOTE,
+        })
+      ) {
+        wrote++;
+      }
+    }
+    if (plan.batch.length > 0) {
+      recordFeed(tx, 'celestrak_satcat', satcatErr === '', satcatErr, wrote);
+      console.log(`celestrak_satcat: checked ${satcatChecked}/${plan.batch.length}, decay dates written ${wrote}`);
+    } else if (plan.archived.length === 0) {
+      console.log('celestrak_satcat: no archived objects to check');
+    }
+  });
+}
+
+export const outcomePoll = spacetimedb.procedure(
+  { onSchedule: outcomeTick },
+  { tick: outcomeTick.rowType },
+  t.unit(),
+  (ctx, _args) => {
+    if (!ctx.sender.isEqual(ctx.databaseIdentity)) return {};
+    pollOutcomes(ctx);
+    return {};
+  }
+);
+
 // Operator button: fetch public feeds now (CelesTrak still respects its gap).
 export const pollFeedsNow = spacetimedb.procedure(t.unit(), ctx => {
   const isOperator = ctx.withTx(tx => {
@@ -1018,7 +1505,127 @@ export const pollFeedsNow = spacetimedb.procedure(t.unit(), ctx => {
   if (!isOperator) throw new SenderError('operator only');
   pollNoaa(ctx);
   pollCelestrak(ctx);
+  pollOutcomes(ctx);
   return {};
+});
+
+// Feed-poller entry for Space-Track decay/TIP rows (the poller holds the login,
+// in Steven's .env; the module never sees it). Respects source rank, so a TIP
+// prediction never replaces a historical decay or an operator correction.
+export const reportOutcome = spacetimedb.reducer(
+  { noradId: t.u32(), name: t.string(), decayAt: t.timestamp(), source: t.string(), note: t.string() },
+  (ctx, a) => {
+    requireRole(ctx, 'poller', 'operator');
+    if (a.noradId <= 0) throw new SenderError('norad_id required');
+    if (a.source !== 'SPACETRACK_DECAY' && a.source !== 'SPACETRACK_TIP') throw new SenderError('bad source');
+    const known = archivedNorads(ctx).find(o => o.noradId === a.noradId);
+    autoOutcome(ctx, { noradId: a.noradId, objectId: known?.objectId ?? '', name: a.name, decayAt: a.decayAt, source: a.source, note: a.note });
+  }
+);
+
+// Operator correction. Replaces the outcome for this NORAD id and scores it again.
+export const upsertOutcome = spacetimedb.reducer(
+  {
+    noradId: t.u32(),
+    objectId: t.string(),
+    name: t.string(),
+    decayAt: t.timestamp(),
+    source: t.string(),
+    finds: t.string(),
+    note: t.string(),
+    replay: t.bool(),
+  },
+  (ctx, a) => {
+    requireRole(ctx, 'operator');
+    if (a.noradId <= 0) throw new SenderError('norad_id required');
+    if (!OUTCOME_SOURCES.includes(a.source)) throw new SenderError('bad source');
+    if (a.objectId) {
+      const obj = ctx.db.reentryObject.id.find(a.objectId);
+      if (!obj) throw new SenderError('unknown object');
+      if (Number(obj.noradId) !== Number(a.noradId)) throw new SenderError('object norad_id does not match');
+    }
+    const row = {
+      noradId: a.noradId,
+      objectId: a.objectId,
+      name: a.name.slice(0, 120),
+      decayAt: a.decayAt,
+      source: a.source,
+      finds: JSON.stringify(parseFinds(a.finds)),
+      note: a.note.slice(0, 500),
+      replay: a.replay,
+      updatedAt: ctx.timestamp,
+    };
+    if (ctx.db.reentryOutcome.noradId.find(a.noradId)) ctx.db.reentryOutcome.noradId.update(row);
+    else ctx.db.reentryOutcome.insert(row);
+    scoreOutcome(ctx, row);
+  }
+);
+
+// Load one historical case. replay is forced on, so the score is never a live
+// prediction. Elements are stored only when the caller supplies a real GP/OMM
+// object; this reducer does not invent them. A GP set queues one FORECAST as of
+// as_of (or the element EPOCH) through the normal worker path.
+export const loadReplayCase = spacetimedb.reducer({ json: t.string() }, (ctx, { json }) => {
+  requireRole(ctx, 'operator');
+  let c: any;
+  try {
+    c = JSON.parse(json);
+  } catch {
+    throw new SenderError('replay case must be JSON');
+  }
+  const id = String(c.id ?? '');
+  if (!id.startsWith('REPLAY-')) throw new SenderError('replay id must start with REPLAY-');
+  const noradId = Math.trunc(Number(c.norad_id));
+  if (!Number.isInteger(noradId) || noradId <= 0) throw new SenderError('norad_id required');
+  if (c.elements != null && (typeof c.elements !== 'object' || Array.isArray(c.elements))) {
+    throw new SenderError('elements must be a GP object or omitted');
+  }
+  const elements = c.elements ? JSON.stringify(c.elements) : '{}';
+  const gp = c.elements ? hasGpElements(elements) : false;
+  if (c.elements && !gp) throw new SenderError('elements must include MEAN_MOTION and EPOCH');
+  const decayAt = parseUtcDateTime(String(c.decay_at ?? ''));
+  if (!decayAt) throw new SenderError('bad decay_at');
+  const source = String(c.source ?? 'OPERATOR');
+  if (!OUTCOME_SOURCES.includes(source)) throw new SenderError('bad source');
+  const name = String(c.name ?? id).slice(0, 120);
+  upsertObject(ctx, {
+    id,
+    name,
+    noradId,
+    source: 'REPLAY',
+    windowStart: undefined,
+    windowEnd: undefined,
+    elements,
+    status: 'REPLAY',
+    updatedAt: ctx.timestamp,
+  });
+  const row = {
+    noradId,
+    objectId: id,
+    name,
+    decayAt,
+    source,
+    finds: JSON.stringify(parseFinds(JSON.stringify(c.finds ?? []))),
+    note: String(c.note ?? '').slice(0, 500),
+    replay: true,
+    updatedAt: ctx.timestamp,
+  };
+  if (ctx.db.reentryOutcome.noradId.find(noradId)) ctx.db.reentryOutcome.noradId.update(row);
+  else ctx.db.reentryOutcome.insert(row);
+  scoreOutcome(ctx, row);
+  if (!gp) return;
+  let asOf = c.as_of ? parseUtcDateTime(String(c.as_of)) : undefined;
+  if (c.as_of && !asOf) throw new SenderError('bad as_of');
+  if (!asOf) {
+    try {
+      asOf = parseUtcDateTime(String(JSON.parse(elements).EPOCH ?? ''));
+    } catch {
+      asOf = undefined;
+    }
+  }
+  if (!asOf) throw new SenderError('GP elements need as_of or an EPOCH');
+  if (micros(asOf) >= micros(decayAt)) throw new SenderError('as_of must be before decay_at');
+  enqueueReplayForecast(ctx, id, asOf);
 });
 
 // ============================================================ sightings
@@ -1190,6 +1797,8 @@ export const publishForecast = spacetimedb.reducer(
     requireRole(ctx, 'worker');
     const job = claimedJob(ctx, a.jobId, 'FORECAST');
     finishJob(ctx, job);
+    // A replay job is scored as if it had been issued at as_of, not at wall clock.
+    const issuedAt: Timestamp = job.asOf ?? ctx.timestamp;
     const me = ctx.db.computeStatus.worker.find(ctx.sender);
     const tier = me?.tier ?? 'unknown';
     let results: any[];
@@ -1224,13 +1833,15 @@ export const publishForecast = spacetimedb.reducer(
         areaKm2_90: Number(r.area_km2_90 ?? 0),
         tier,
         device: a.device,
-        computedAt: ctx.timestamp,
+        computedAt: issuedAt,
         note: String(r.error ?? '').slice(0, 200),
       };
       if (prev) ctx.db.forecast.objectId.update(row);
       else ctx.db.forecast.insert(row);
       // Chain: objects likely to come down soon get a debris prediction.
+      // Replay forecasts are for scoring a past case, not for live debris jobs.
       if (
+        !job.asOf &&
         row.status === 'ok' &&
         row.decayedFrac >= DEBRIS_MIN_P &&
         row.tQ50 !== undefined &&
@@ -1248,15 +1859,17 @@ export const publishForecast = spacetimedb.reducer(
         decayedFrac: row.decayedFrac,
         nSamples: row.nSamples,
         tier,
-        computedAt: ctx.timestamp,
+        computedAt: issuedAt,
       });
       // Only re-draw the corridor from the forecast while no sightings shape it.
       const hasSightings = [...ctx.db.sighting.objectId.filter(obj.id)].some(
         (s: any) => s.verdict === 'ACCEPTED' || s.verdict === 'HELD'
       );
       if (Array.isArray(r.bands) && r.bands.length > 0 && !hasSightings) {
-        writeCorridor(ctx, obj.id, JSON.stringify(r.bands), row.areaKm2_90, row.nSamples, 0, a.jobMs, tier);
+        writeCorridor(ctx, obj.id, JSON.stringify(r.bands), row.areaKm2_90, row.nSamples, 0, a.jobMs, tier, issuedAt);
       }
+      const outcome = ctx.db.reentryOutcome.noradId.find(obj.noradId);
+      if (outcome && micros(issuedAt) < micros(outcome.decayAt)) scoreOutcome(ctx, outcome);
     }
     ctx.db.computeRun.insert({
       id: 0n,
@@ -1515,6 +2128,7 @@ export const reportComputeStatus = spacetimedb.reducer(
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
   ensurePositionTick(ctx);
+  ensureOutcomeTick(ctx);
   const unhealthy = new Set<string>(); // fast lane: down after HEARTBEAT_STALE
   const gone = new Set<string>(); // bulk lane: reported unhealthy, or silent for HEARTBEAT_STALE_BULK
   for (const w of ctx.db.computeStatus.iter()) {
@@ -1526,7 +2140,9 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
   let forecastPending = false;
   let lastForecast = 0n;
   for (const j of [...ctx.db.computeJob.iter()]) {
-    if (j.kind === 'FORECAST') {
+    // Only the live batch (object_id *) holds the 20-minute forecast slot.
+    // A replay FORECAST must not block or reset that schedule.
+    if (j.kind === 'FORECAST' && j.objectId === '*') {
       if (j.status === 'QUEUED' || j.status === 'CLAIMED') forecastPending = true;
       if (micros(j.createdAt) > lastForecast) lastForecast = micros(j.createdAt);
     }

@@ -39,6 +39,7 @@ Repo: https://github.com/bobbybendola/skyFall (private for now).
 | Web | 2D prototype (MapLibre) with live forecasts. **To be replaced by the 3D globe** |
 | Crowd sightings, replay, corridor | Parked (code stays, not in the demo) |
 | Archive | Element sets and forecasts archived since ~11:00 PT, for validating a real re-entry this weekend |
+| Forecast validation | `reentry_outcome` + `forecast_score` in the module. CelesTrak SATCAT decay dates for archived NORAD ids. Space-Track decay/TIP from the feed-poller (planned) via `report_outcome`; the module never holds the login |
 
 ---
 
@@ -151,7 +152,8 @@ cd services/gx10-bridge && npm ci && WORKER_TIER=gpu npm start      # cpu on the
 cd tools/demo-ctl && npm ci
 npm start -- approve <identity-hex>      # let a worker take jobs
 npm start -- status                      # objects, corridor, jobs, workers, feeds
-npm start -- poll                        # fetch NOAA + CelesTrak now
+npm start -- poll                        # fetch NOAA, CelesTrak, and archived SATCAT decay dates now
+npm start -- load-replay                 # load data/replay/historical-cases.json (replay=true)
 
 # web
 cd web && npm ci && npm run dev          # http://localhost:5173 (big screen), /report (phone)

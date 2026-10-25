@@ -44,8 +44,11 @@ const HELP = `commands:
   start <event-id> [offset_s] [speed]
   pause
   reset <event-id>               clear DEMO/SIM sightings, history; queue a baseline corridor
-  poll                           fetch NOAA + CelesTrak now
+  poll                           fetch NOAA, CelesTrak, and outcome decay dates now
   forecast                       queue a GPU forecast for all objects now
+  outcome <norad> <decay-iso> <source> <replay 0|1> [object-id] [finds-json] [note]
+                                 insert or correct an official decay, then score it
+  load-replay [file]             load historical cases (default data/replay/historical-cases.json)
   archive                        archive current elements of every object (one-off backfill)
   seed-archetypes [dir]          load data/archetypes/*.json, then re-match every profile
   rematch                        re-match every satellite profile to an archetype
@@ -128,6 +131,29 @@ async function runCommand(conn: DbConnection, idHex: string): Promise<void> {
     case 'poll':
       await conn.procedures.pollFeedsNow({});
       return;
+    case 'outcome':
+      await r.upsertOutcome({
+        noradId: Number(need(args[0], 'norad id')),
+        decayAt: tsOf(need(args[1], 'decay iso'))!,
+        source: need(args[2], 'source'),
+        replay: args[3] === '1' || args[3] === 'true',
+        objectId: args[4] ?? '',
+        finds: args[5] ?? '[]',
+        note: args[6] ?? '',
+        name: '',
+      });
+      console.log(`outcome ${args[0]}`);
+      return;
+    case 'load-replay': {
+      const file = args[0] ?? join(root, 'data', 'replay', 'historical-cases.json');
+      const parsed = JSON.parse(readFileSync(file, 'utf8'));
+      const cases = Array.isArray(parsed) ? parsed : (parsed.cases ?? [parsed]);
+      for (const c of cases) {
+        await r.loadReplayCase({ json: JSON.stringify(c) });
+        console.log(`replay case ${c.id} (elements ${c.elements ? 'yes' : 'omitted'})`);
+      }
+      return;
+    }
     case 'status':
       return printStatus(conn);
     case 'export':
@@ -184,7 +210,16 @@ function printStatus(conn: DbConnection): Promise<void> {
           console.log(`worker ${w.worker.toHexString().slice(0, 12)}… ${w.tier} ${w.gpuName} ${w.healthy ? 'HEALTHY' : 'down'} (heartbeat ${age}s ago, ${w.variantsRunTotal} variants)`);
         }
         for (const f of d.feedStatus.iter()) {
-          console.log(`feed ${f.feed}: last ok ${f.lastOkAt?.toDate().toISOString() ?? 'never'} ${f.lastError ? 'ERR ' + f.lastError : ''}`);
+          console.log(`feed ${f.feed}: last ok ${f.lastOkAt?.toDate().toISOString() ?? 'never'} ${f.lastError ? 'ERR ' + f.lastError : ''} rows ${f.rowsIngested}`);
+        }
+        for (const o of d.reentryOutcome.iter()) {
+          console.log(`outcome ${o.noradId} ${o.source} ${o.decayAt.toDate().toISOString()} replay=${o.replay}`);
+        }
+        const scores = [...d.forecastScore.iter()].sort((a, b) => Number(a.id - b.id));
+        for (const s of scores) {
+          console.log(
+            `score ${s.id} norad ${s.noradId} ${s.status} err ${s.hoursError ?? '—'}h inside ${s.insideWindow ?? '—'} calibrated ${s.calibrated} lead ${s.leadTimeHours ?? '—'}h replay=${s.replay} ${s.source} finds ${s.findHits}`
+          );
         }
         const sw = d.spaceWeather.key.find('current');
         if (sw) console.log(`space weather: Kp ${sw.kp ?? '?'} (${sw.kpTime}), F10.7 ${sw.f107 ?? '?'} (${sw.f107Time})`);
@@ -200,6 +235,8 @@ function printStatus(conn: DbConnection): Promise<void> {
         'SELECT * FROM feed_status',
         'SELECT * FROM space_weather',
         'SELECT * FROM replay_state',
+        'SELECT * FROM reentry_outcome',
+        'SELECT * FROM forecast_score',
       ]);
   });
 }

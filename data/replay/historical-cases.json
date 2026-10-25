@@ -1,0 +1,44 @@
+{
+  "about": "Historical re-entry cases for forecast validation. load_replay_case forces replay=true, so a score from these rows is not a live prediction. elements is null: no public pre-decay GP/TLE was found without a Space-Track login. gp_history is authenticated and limited to one request per object per lifetime (docs/SPACETRACK_NOTES.md). CelesTrak's public GP feed does not serve these decayed epochs. No element set is invented. decay_at is the CelesTrak SATCAT DECAY_DATE stored as 00:00:00Z because that field has no time of day.",
+  "queried": "2026-10-25",
+  "cases": [
+    {
+      "id": "REPLAY-delta-ii-1997",
+      "name": "DELTA 2 R/B",
+      "norad_id": 23852,
+      "object_id_cospar": "1996-024B",
+      "elements": null,
+      "elements_reason": "No public GP/TLE for a pre-decay epoch. Not fabricated.",
+      "decay_at": "1997-01-22T00:00:00Z",
+      "source": "CELESTRAK_SATCAT",
+      "finds": [],
+      "finds_reason": "Published accounts name Georgetown, Texas (tank) and Seguin, Texas (titanium sphere) but do not give a surveyed lat/lon.",
+      "note": "CelesTrak SATCAT DECAY_DATE 1997-01-22 for NORAD 23852 (1996-024B DELTA 2 R/B), queried 2026-10-25, stored as 00:00:00Z. Debris: Smithsonian Air & Space, The Things That Fell to Earth; ESA image Debris landed in Texas; SeeSat-L Feb 1997. No surveyed lat/lon, so finds is empty. Elements omitted.",
+      "citations": [
+        "https://celestrak.org/satcat/records.php?CATNR=23852&FORMAT=json",
+        "https://celestrak.org/satcat/satcat-format.php",
+        "https://www.smithsonianmag.com/air-space-magazine/the-things-that-fell-to-earth-8797089/",
+        "https://www.esa.int/ESA_Multimedia/Images/2015/12/Debris_landed_in_Texas",
+        "https://www.satobs.org/seesat/Feb-1997/0207.html"
+      ]
+    },
+    {
+      "id": "REPLAY-falcon9-copv-2021",
+      "name": "FALCON 9 R/B",
+      "norad_id": 47782,
+      "object_id_cospar": "2021-017BN",
+      "elements": null,
+      "elements_reason": "No public GP/TLE for a pre-decay epoch. Not fabricated. Aerospace.org reentry id cited by NASA ARES is 47782.",
+      "decay_at": "2021-03-26T00:00:00Z",
+      "source": "CELESTRAK_SATCAT",
+      "finds": [],
+      "finds_reason": "A COPV was recovered in Grant County, Washington. The sheriff did not publish the farm coordinates (Space.com, 2021-04-03). The NASA ARES coordinate is a radar/event reference, not that find, so it is not stored as a find point.",
+      "note": "CelesTrak SATCAT DECAY_DATE 2021-03-26 for NORAD 47782 (2021-017BN FALCON 9 R/B), queried 2026-10-25, stored as 00:00:00Z. NASA ARES reports the reentry at 2021-03-26 04:00 UTC; that clock time is not substituted for the catalog date. COPV find location was not published. Elements omitted.",
+      "citations": [
+        "https://celestrak.org/satcat/records.php?CATNR=47782&FORMAT=json",
+        "https://ares.jsc.nasa.gov/meteorite-falls/events/yakima-wa-debris-de-orbit",
+        "https://www.space.com/spacex-rocket-debris-found-washington-farm"
+      ]
+    }
+  ]
+}
