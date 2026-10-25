@@ -20,7 +20,7 @@ const NOAA_EVERY = 15n * 60n * SEC;
 const CELESTRAK_EVERY = 2n * 3600n * SEC;
 const CELESTRAK_MIN_GAP = 2n * 3600n * SEC; // CelesTrak 403s repeat downloads inside one update
 const LEASE = 60n * SEC; // fast lane (CLASSIFY/UPDATE). Failover is faster: sweep requeues jobs of workers whose heartbeat stopped
-const LEASE_BULK = 15n * 60n * SEC; // bulk lane (FORECAST); a dead worker's job is requeued sooner by sweep
+const LEASE_BULK = 15n * 60n * SEC; // bulk lane (FORECAST, DEBRIS); a dead worker's job is requeued sooner by sweep
 const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
 const DEBRIS_WITHIN = 72n * 3600n * SEC; // run debris for objects forecast to re-enter this soon
 const DEBRIS_MIN_P = 0.2; // ...with at least this chance inside the forecast horizon
@@ -518,7 +518,11 @@ function enqueueForecast(ctx: AnyCtx): void {
   });
 }
 
-const laneOf = (kind: string) => (kind === 'FORECAST' ? 'bulk' : 'fast');
+// DEBRIS shares the bulk lane with FORECAST: /debris reuses the forecast
+// particles cached in the same compute process (~4 s), and one compute runs
+// one simulation at a time, so in the fast lane it timed out queued behind a
+// 9-min forecast. In the bulk lane it runs right after its forecast (rank).
+const laneOf = (kind: string) => (kind === 'FORECAST' || kind === 'DEBRIS' ? 'bulk' : 'fast');
 
 // One QUEUED debris job per object is enough (it reads the latest forecast).
 function enqueueDebris(ctx: AnyCtx, objectId: string): void {
@@ -1007,7 +1011,7 @@ export const claimJob = spacetimedb.reducer({}, ctx => {
     const gpuUp = [...ctx.db.computeStatus.iter()].some(w => w.tier === 'gpu' && w.healthy);
     if (gpuUp) return;
   }
-  // Two lanes per worker: one bulk job (FORECAST) and one fast job
+  // Two lanes per worker: one bulk job (FORECAST, DEBRIS) and one fast job
   // (CLASSIFY/UPDATE) at a time, so a long forecast never delays a sighting.
   const busy = new Set<string>();
   for (const j of ctx.db.computeJob.iter()) {
@@ -1017,7 +1021,7 @@ export const claimJob = spacetimedb.reducer({}, ctx => {
   let next: any = null;
   for (const j of ctx.db.computeJob.iter()) {
     if (j.status !== 'QUEUED' || busy.has(laneOf(j.kind))) continue;
-    // CLASSIFY first (it gates the sighting), then UPDATE, then FORECAST; oldest first.
+    // CLASSIFY first (it gates the sighting), then UPDATE, then DEBRIS, then FORECAST; oldest first.
     if (!next || rank(j.kind) < rank(next.kind) || (rank(j.kind) === rank(next.kind) && j.id < next.id)) {
       next = j;
     }
@@ -1452,7 +1456,7 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
       if (micros(j.createdAt) > lastForecast) lastForecast = micros(j.createdAt);
     }
     if (j.status !== 'CLAIMED') continue;
-    const lease = j.kind === 'FORECAST' ? LEASE_BULK : LEASE;
+    const lease = laneOf(j.kind) === 'bulk' ? LEASE_BULK : LEASE;
     const holderDown = j.claimedBy ? unhealthy.has(j.claimedBy.toHexString()) : true;
     if (!holderDown && !olderThan(ctx, j.claimedAt, lease)) continue;
     const giveUp = j.attempts >= MAX_ATTEMPTS;
