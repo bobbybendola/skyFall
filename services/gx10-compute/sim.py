@@ -533,8 +533,8 @@ class Engine:
                 t_re=t_re[sl],
                 lat=lat[sl],
                 lon=lon[sl],
-                r_re=res.r_re[sl].cpu().numpy().astype(np.float64),
-                v_re=res.v_re[sl].cpu().numpy().astype(np.float64),
+                r_re=res.r_reentry[sl].cpu().numpy().astype(np.float64),
+                v_re=res.v_reentry[sl].cpu().numpy().astype(np.float64),
                 bc=float(bc_np[j]),
                 calibrated=bool(ok_np[j]),
                 rv=(r, v),
@@ -612,8 +612,8 @@ class Engine:
         st.t_re = res.t_reentry.cpu().numpy()
         st.lat = res.lat.cpu().numpy().astype(np.float64)
         st.lon = res.lon.cpu().numpy().astype(np.float64)
-        st.r_re = res.r_re.cpu().numpy().astype(np.float64)
-        st.v_re = res.v_re.cpu().numpy().astype(np.float64)
+        st.r_re = res.r_reentry.cpu().numpy().astype(np.float64)
+        st.v_re = res.v_reentry.cpu().numpy().astype(np.float64)
 
     def _summarise(self, oid: str, st: ObjectState, w: np.ndarray, scores: list) -> dict:
         decayed = np.isfinite(st.t_re)
