@@ -6,12 +6,12 @@
   "sources": [
     "6U CubeSat form factor ~10 x 22.6 x 34 cm, up to ~12 kg: CubeSat Design Specification (Cal Poly) (CHECK revision)",
     "HYPSO-1 (NTNU) and NAPA-1 (Royal Thai Air Force) are 6U CubeSats: public mission pages (CHECK)",
-    "Component split below is ASSUMED"
+    "Component split below is ASSUMED. Solar panels and circuit boards are FR4 glass-epoxy; modeled as CFRP (resin decomposes ~600 K), not as solid glass"
   ],
   "components": [
     {"name": "structure frame",   "material": "Al6061", "shape": "box",   "mass_kg": 2.0, "dims_m": [0.10, 0.226, 0.34], "count": 1, "parent": null},
-    {"name": "solar array",       "material": "Glass",  "shape": "plate", "mass_kg": 0.5, "dims_m": [0.34, 0.226, 0.005], "count": 2, "parent": null, "_note": "two deployed wings ASSUMED"},
-    {"name": "circuit boards",    "material": "Glass",  "shape": "plate", "mass_kg": 0.12, "dims_m": [0.09, 0.09, 0.002], "count": 12, "parent": "structure frame"},
+    {"name": "solar array",       "material": "CFRP",  "shape": "plate", "mass_kg": 0.5, "dims_m": [0.34, 0.226, 0.005], "count": 2, "parent": null, "_note": "two deployed wings ASSUMED"},
+    {"name": "circuit boards",    "material": "CFRP",  "shape": "plate", "mass_kg": 0.12, "dims_m": [0.09, 0.09, 0.002], "count": 12, "parent": "structure frame"},
     {"name": "battery pack",      "material": "Copper", "shape": "box",   "mass_kg": 0.8, "dims_m": [0.09, 0.09, 0.04], "count": 1, "parent": "structure frame"},
     {"name": "imager / payload",  "material": "Al6061", "shape": "box",   "mass_kg": 2.0, "dims_m": [0.09, 0.20, 0.15], "count": 1, "parent": "structure frame"},
     {"name": "imager optics",     "material": "Glass",  "shape": "cylinder", "mass_kg": 0.4, "dims_m": [0.08, 0.06], "count": 1, "parent": "imager / payload"},

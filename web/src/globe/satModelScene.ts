@@ -18,8 +18,9 @@ const DIM_OPACITY = 0.12;
 const SHELL_OPACITY = 0.28; // a parent drawn see-through so the parts inside show
 
 function baseColor(material: string): THREE.Color {
-  // CFRP is black in the globe legend; a touch lighter here so its shape reads.
-  return new THREE.Color(material === 'CFRP' ? '#2b2f36' : (MATERIAL_COLOR[material] ?? OTHER_MATERIAL_COLOR));
+  // CFRP is black in the globe legend; lighter slate here so large CFRP parts (solar
+  // arrays, instrument tubes) read against the dark panel instead of showing as outlines.
+  return new THREE.Color(material === 'CFRP' ? '#7a8494' : (MATERIAL_COLOR[material] ?? OTHER_MATERIAL_COLOR));
 }
 
 function geometryFor(p: Piece): THREE.BufferGeometry {
@@ -85,7 +86,7 @@ export function createScene(canvas: HTMLCanvasElement, cb: Callbacks): SceneHand
     clear();
     for (const p of pieces) {
       const geo = geometryFor(p);
-      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: baseColor(p.material), metalness: 0.35, roughness: 0.55 }));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: baseColor(p.material), ...(p.material === 'CFRP' ? { metalness: 0.05, roughness: 0.8 } : { metalness: 0.35, roughness: 0.55 }) }));
       mesh.position.set(...p.pos);
       mesh.userData = { part: p.part, translucent: p.translucent };
       if (p.translucent) mesh.renderOrder = 1; // after the opaque parts inside it
@@ -99,8 +100,8 @@ export function createScene(canvas: HTMLCanvasElement, cb: Callbacks): SceneHand
     const box = new THREE.Box3().setFromObject(group);
     const size = box.getSize(new THREE.Vector3());
     const centre = box.getCenter(new THREE.Vector3());
-    const r = Math.max(0.5, size.length() / 2);
-    const dist = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.95;
+    const r = Math.max(0.05, size.length() / 2); // small floor: CubeSats are ~0.3 m
+    const dist = (r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.1;
     camera.position.copy(centre).add(new THREE.Vector3(0.55, -0.75, 0.45).normalize().multiplyScalar(dist));
     camera.near = dist / 100;
     camera.far = dist * 10;
