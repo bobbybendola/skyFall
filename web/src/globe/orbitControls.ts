@@ -8,6 +8,9 @@
 //   either, selected     orbit the selected satellite
 //   "Fly to" (tracked)   Cesium's own entity orbit, unchanged
 //
+// Letting go mid-drag keeps the globe turning and slows it to a stop (drift);
+// any new press, scroll or "Fly to" stops it.
+//
 // Scroll/right-drag zoom, shift-drag look and touch pinch stay Cesium's.
 import {
   Cartesian2,
@@ -26,8 +29,14 @@ import { trackId } from './selectionLayer.tsx';
 const BLEND_NEAR_M = 200_000; // below this height the orbit pivot is the ground point
 const BLEND_FAR_M = 2_000_000; // above this it is Earth's center
 const MIN_CLEARANCE_M = 20; // orbiting never takes the camera below the ground
+const DRIFT_SAMPLE_MS = 80; // release speed = movement over about the last 80 ms of the drag
+const DRIFT_HOLD_MS = 60; // held still this long before letting go: no drift
+const DRIFT_TAU_MS = 300; // drift speed falls to 1/e every 300 ms
+const DRIFT_MIN_PX_MS = 0.02; // stop below this speed (px per ms)
 
-type Drag = { mode: 'spin' | 'orbit'; x: number; y: number; frame: Matrix4 | null; id: number };
+type Mode = 'spin' | 'orbit';
+type Drag = { mode: Mode; x: number; y: number; frame: Matrix4 | null; id: number; startT: number; samples: { t: number; dx: number; dy: number }[] };
+type Drift = { mode: Mode; frame: Matrix4 | null; vx: number; vy: number; last: number; raf: number };
 
 export function useOrbitControls(viewer: Viewer | null): void {
   useEffect(() => {
@@ -45,14 +54,51 @@ export function useOrbitControls(viewer: Viewer | null): void {
 
     const canvas = viewer.scene.canvas;
     let drag: Drag | null = null;
+    let drift: Drift | null = null;
+    const stopDrift = () => {
+      if (drift) cancelAnimationFrame(drift.raf);
+      drift = null;
+    };
+    const apply = (mode: Mode, frame: Matrix4 | null, dx: number, dy: number) => {
+      if (mode === 'spin') spin(viewer, dx, dy);
+      else if (frame) orbit(viewer, frame, dx, dy);
+    };
+    const step = (now: number) => {
+      if (!drift || viewer.isDestroyed() || viewer.trackedEntity) return stopDrift();
+      const dt = Math.min(now - drift.last, 50); // a stalled tab does not jump the globe
+      drift.last = now;
+      apply(drift.mode, drift.frame, drift.vx * dt, drift.vy * dt);
+      const k = Math.exp(-dt / DRIFT_TAU_MS);
+      drift.vx *= k;
+      drift.vy *= k;
+      if (Math.hypot(drift.vx, drift.vy) < DRIFT_MIN_PX_MS) return stopDrift();
+      drift.raf = requestAnimationFrame(step);
+    };
+    const startDrift = (d: Drag) => {
+      const now = performance.now();
+      const last = d.samples[d.samples.length - 1];
+      if (!last || now - last.t > DRIFT_HOLD_MS) return; // held still before letting go
+      // Speed over roughly the last DRIFT_SAMPLE_MS, measured from the sample just before
+      // that window (works for both 1000 Hz mice and sparse touch/trackpad events).
+      let i = d.samples.length - 1;
+      while (i > 0 && now - d.samples[i - 1].t <= DRIFT_SAMPLE_MS) i--;
+      const from = i > 0 ? d.samples[i - 1].t : d.startT;
+      const span = Math.max(now - from, 16);
+      const recent = d.samples.slice(i);
+      const vx = recent.reduce((a, s) => a + s.dx, 0) / span;
+      const vy = recent.reduce((a, s) => a + s.dy, 0) / span;
+      if (Math.hypot(vx, vy) < DRIFT_MIN_PX_MS * 5) return;
+      drift = { mode: d.mode, frame: d.frame, vx, vy, last: now, raf: requestAnimationFrame(step) };
+    };
 
     const down = (e: PointerEvent) => {
-    if (viewer.trackedEntity || e.shiftKey || !e.isPrimary) return;
+      stopDrift();
+      if (viewer.trackedEntity || e.shiftKey || !e.isPrimary) return;
       if (e.button !== 0 && e.button !== 1) return;
       const sat = selectedSatPosition(viewer);
       const mode = sat || e.button === 1 || e.ctrlKey ? 'orbit' : 'spin';
       const frame = mode === 'orbit' ? orbitFrame(viewer, sat) : null;
-      drag = { mode, x: e.clientX, y: e.clientY, frame, id: e.pointerId };
+      drag = { mode, x: e.clientX, y: e.clientY, frame, id: e.pointerId, startT: performance.now(), samples: [] };
       canvas.setPointerCapture(e.pointerId);
     };
     const move = (e: PointerEvent) => {
@@ -62,20 +108,28 @@ export function useOrbitControls(viewer: Viewer | null): void {
       drag.x = e.clientX;
       drag.y = e.clientY;
       if (!dx && !dy) return;
-      if (drag.mode === 'spin') spin(viewer, dx, dy);
-      else if (drag.frame) orbit(viewer, drag.frame, dx, dy);
+      const t = performance.now();
+      drag.samples.push({ t, dx, dy });
+      while (drag.samples.length && t - drag.samples[0].t > DRIFT_SAMPLE_MS * 2) drag.samples.shift();
+      apply(drag.mode, drag.frame, dx, dy);
     };
     const up = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return;
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      if (e.type === 'pointerup') startDrift(drag);
       drag = null;
     };
+    const offTrackedDrift = viewer.trackedEntityChanged.addEventListener(stopDrift);
     canvas.addEventListener('pointerdown', down);
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', stopDrift, { passive: true });
     return () => {
+      stopDrift();
       offTracked();
+      offTrackedDrift();
+      canvas.removeEventListener('wheel', stopDrift);
       canvas.removeEventListener('pointerdown', down);
       canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerup', up);
