@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { JulianDate, type Viewer } from 'cesium';
 import type { ReentryEntry, ReentryLookup, TrackedObject } from './satellites.ts';
+import { PanelTitle, usePanelOpen } from './panel.tsx';
 import { DANGER_P, pointFilter, SELECTED_CSS, WHEN_ROWS, whenCss, whenOf, type When } from './pointStyle.ts';
 
 /** A point's swatch, same rules as the globe: color = when, white ring = dangerous. */
@@ -58,6 +59,7 @@ export function Legend({ viewer, objects, reentry, forecasted, danger }: LegendP
     counts.set(w, (counts.get(w) ?? 0) + 1);
     if ((danger.get(o.id) ?? 0) >= DANGER_P) dangerous++;
   }
+  const [open, toggleOpen] = usePanelOpen('legend');
   const toggle = (f: When | 'danger') => pointFilter.set(filter === f ? null : f);
   const row = (key: When | 'danger', dot: ReturnType<typeof WhenDot>, label: string, n: number) => (
     <button key={key} className={filter === key ? 'on' : filter ? 'off' : ''} onClick={() => toggle(key)} disabled={n === 0 && filter !== key}>
@@ -66,15 +68,21 @@ export function Legend({ viewer, objects, reentry, forecasted, danger }: LegendP
   );
   return (
     <div className="globe-legend">
-      <b>When could it come down?</b>
-      <div className="muted">color = earliest plausible re-entry</div>
-      {WHEN_ROWS.map(r => row(r.key, <WhenDot when={r.key} />, r.label, counts.get(r.key) ?? 0))}
-      <b>Could it hurt someone?</b>
-      {row('danger', <WhenDot when="later" dangerous />, `ring: ≥ ${Math.round(DANGER_P * 100)}% chance a piece lands with > 15 J`, dangerous)}
-      <div className="muted">modeled estimate; no ring = harmless or not modeled yet</div>
-      <div>
-        <span className="dot" style={{ background: SELECTED_CSS }} /> selected
-      </div>
+      <PanelTitle open={open} onToggle={toggleOpen}>
+        <b>When could it come down?</b>
+      </PanelTitle>
+      {open && (
+        <>
+          <div className="muted">color = earliest plausible re-entry</div>
+          {WHEN_ROWS.map(r => row(r.key, <WhenDot when={r.key} />, r.label, counts.get(r.key) ?? 0))}
+          <b>Could it hurt someone?</b>
+          {row('danger', <WhenDot when="later" dangerous />, `ring: ≥ ${Math.round(DANGER_P * 100)}% chance a piece lands with > 15 J`, dangerous)}
+          <div className="muted">modeled estimate; no ring = harmless or not modeled yet</div>
+          <div>
+            <span className="dot" style={{ background: SELECTED_CSS }} /> selected
+          </div>
+        </>
+      )}
       {filter && (
         <button className="clear" onClick={() => pointFilter.set(null)}>
           show all points

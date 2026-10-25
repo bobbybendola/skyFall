@@ -1,11 +1,11 @@
 /* G2: debris lines + impact zones overlay (toggle under the HUD, tooltip at the cursor). */
-.debris-toggle { position: absolute; top: 44px; left: 8px; z-index: 2; background: rgba(0,0,0,0.6); color: #fff; padding: 4px 10px; border-radius: 4px; font-size: 12px; display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
+.debris-toggle { background: rgba(0,0,0,0.6); color: #fff; padding: 4px 10px; border-radius: 4px; font-size: 12px; display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
 .debris-toggle .muted { color: #bbb; }
-.debris-tip { position: absolute; z-index: 3; pointer-events: none; background: rgba(10,10,14,0.88); color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; line-height: 1.45; max-width: 280px; border: 1px solid rgba(255,255,255,0.15); }
+.debris-tip { position: fixed; z-index: 3; pointer-events: none; background: rgba(10,10,14,0.88); color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; line-height: 1.45; max-width: 280px; border: 1px solid rgba(255,255,255,0.15); }
 .debris-tip.pinned { border-color: #9cc3ff; }
 .debris-tip .muted { color: #bbb; font-size: 11px; }
 .debris-tip .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; border: 1px solid #888; }
-.warn-toggle { top: 74px; flex-direction: column; align-items: flex-start; max-width: 340px; cursor: default; }
+.warn-toggle { flex-direction: column; align-items: flex-start; max-width: 340px; cursor: default; }
 .warn-toggle label { cursor: pointer; display: flex; gap: 6px; align-items: center; }
 .warn-legend { line-height: 1.5; }
 .warn-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; border: 1px solid #888; }

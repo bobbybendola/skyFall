@@ -8,6 +8,7 @@ import { useTable } from 'spacetimedb/react';
 import { tables } from '../module_bindings/index.ts';
 import { focusedPart, hovered } from './debrisPick.ts';
 import { MATERIAL_COLOR, OTHER_MATERIAL_COLOR, type DebrisResult } from './debrisTypes.ts';
+import { NARROW } from './panel.tsx';
 import { layoutParts, type ArchetypePart } from './satModelLayout.ts';
 import type { SceneHandle } from './satModelScene.ts';
 import type { TrackedObject } from './satellites.ts';
@@ -75,7 +76,8 @@ export function SatModelPanel({ objects, debris }: { objects: TrackedObject[]; d
   const model = useModel(obj, debris);
   const focus = focusedPart.use();
   const globeTip = hovered.use();
-  const [open, setOpen] = useState(true);
+  const wide = () => !window.matchMedia?.(NARROW).matches; // phones: start collapsed, the globe comes first
+  const [open, setOpen] = useState(wide);
   const canvas = useRef<HTMLCanvasElement>(null);
   const scene = useRef<SceneHandle | null>(null);
   const [failed, setFailed] = useState(false);
@@ -83,10 +85,10 @@ export function SatModelPanel({ objects, debris }: { objects: TrackedObject[]; d
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
 
-  // New object: clear the focus and reopen the panel.
+  // New object: clear the focus and reopen the panel (wide screens).
   useEffect(() => {
     focusedPart.set(null);
-    setOpen(true);
+    setOpen(wide());
   }, [selected]);
   useEffect(() => () => focusedPart.set(null), []);
 
