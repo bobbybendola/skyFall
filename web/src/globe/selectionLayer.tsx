@@ -23,7 +23,8 @@ import { sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
 import type { DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
-import { localTime, reentryCss, relTime } from './legend.tsx';
+import { localTime, reentryCss, relTime, useClockNow } from './legend.tsx';
+import { resetClock } from './cesium-setup.ts';
 
 const PATH_HOURS = 3;
 const PATH_STEP_S = 60;
@@ -148,6 +149,7 @@ export function SelectedCard({
   debris?: DebrisResult | null;
 }) {
   const selected = useSelected();
+  const nowMs = useClockNow(viewer);
   const obj = objects.find(o => o.id === selected);
   if (!obj || !viewer) return null;
   const r = reentry.get(obj.id);
@@ -157,8 +159,18 @@ export function SelectedCard({
   } catch {
     /* ignore */
   }
-  const nowMs = JulianDate.toDate(viewer.clock.currentTime).getTime();
   const flyTo = () => followObject(viewer, obj.id);
+  // Re-entry moment: the debris break-up time (80 km) when we have a live one, else the forecast median.
+  const b = debris?.source === 'live' ? debris.breakup.t_unix_s * 1000 : NaN;
+  const reentryMs = Number.isFinite(b) && b > 0 ? b : r?.t50;
+  const jumpToReentry = () => {
+    if (reentryMs === undefined || !Number.isFinite(reentryMs)) return;
+    viewer.clock.currentTime = JulianDate.fromDate(new Date(reentryMs - 3 * 60_000)); // 3 min before
+    viewer.clock.multiplier = 10;
+    viewer.clock.shouldAnimate = true;
+    followObject(viewer, obj.id);
+  };
+  const atNow = Math.abs(nowMs - Date.now()) < 60_000;
   return (
     <div className="globe-info">
       <b>{obj.name}</b> <span className="muted">NORAD {obj.noradId}</span>
@@ -183,7 +195,10 @@ export function SelectedCard({
           {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
         </div>
       )}
-      <button onClick={flyTo}>Fly to</button> <button onClick={() => { unfollow(viewer); setSelected(null); }}>Clear</button>
+      <button onClick={flyTo}>Fly to</button>{' '}
+      {reentryMs !== undefined && Number.isFinite(reentryMs) && <button onClick={jumpToReentry}>Jump to re-entry</button>}{' '}
+      {!atNow && <button onClick={() => resetClock(viewer)}>Back to now</button>}{' '}
+      <button onClick={() => { unfollow(viewer); setSelected(null); }}>Clear</button>
     </div>
   );
 }

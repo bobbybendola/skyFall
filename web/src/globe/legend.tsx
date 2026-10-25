@@ -1,10 +1,22 @@
 // Readability helpers for the globe: the point-color legend and plain-language
 // re-entry times ("in 14 h (Sat 2:40 AM PDT)" instead of UTC timestamps).
-import { Color } from 'cesium';
+import { useEffect, useState } from 'react';
+import { Color, JulianDate, type Viewer } from 'cesium';
 import { reentryColor } from './satellites.ts';
 
 /** CSS color of a point, same rule as the globe (satellites.reentryColor). */
 export const reentryCss = (t50: number | undefined, nowMs: number) => reentryColor(t50, nowMs, false).toCssColorString();
+
+/** The Cesium clock time in ms, refreshed every second (so relative times follow a jump). */
+export function useClockNow(viewer: Viewer | null): number {
+  const read = () => (viewer && !viewer.isDestroyed() ? JulianDate.toDate(viewer.clock.currentTime).getTime() : Date.now());
+  const [now, setNow] = useState(read);
+  useEffect(() => {
+    const t = setInterval(() => setNow(read()), 1000);
+    return () => clearInterval(t);
+  }, [viewer]); // eslint-disable-line react-hooks/exhaustive-deps
+  return now;
+}
 
 /** "in 14 h", "in 2.5 days", "3 h ago". */
 export function relTime(t: number, nowMs: number): string {
