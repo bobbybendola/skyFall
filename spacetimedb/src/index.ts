@@ -282,6 +282,12 @@ const debrisForecast = table(
     device: t.string(),
     computedAt: t.timestamp(),
     note: t.string(),
+    // Danger measures (pieces landing with >= 15 J, as NASA/ESA casualty tools count).
+    // Added later, so they default to -1 = "not computed" on older rows.
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
+    hazardPiecesP95: t.f64().default(-1),
+    survivingMassFrac: t.f64().default(-1),
   }
 );
 
@@ -304,6 +310,7 @@ const debrisComponent = table(
     impactLat: t.f64().optional(),
     impactLon: t.f64().optional(),
     footprint: t.string(), // JSON bands
+    pHazard: t.f64().default(-1), // per copy, lands with >= 15 J; -1 = not computed
   }
 );
 
@@ -330,6 +337,8 @@ const debrisHistory = table(
     areaKm2_90: t.f64(),
     tier: t.string(),
     computedAt: t.timestamp(),
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
   }
 );
 
@@ -1279,6 +1288,10 @@ export const publishDebris = spacetimedb.reducer(
       device: a.device,
       computedAt: ctx.timestamp,
       note: String(r.note ?? '').slice(0, 200),
+      pHazard: num(r.hazard?.p_any, -1),
+      hazardPiecesMean: num(r.hazard?.pieces_mean, -1),
+      hazardPiecesP95: num(r.hazard?.pieces_p95, -1),
+      survivingMassFrac: num(r.surviving_mass_frac, -1),
     };
     if (prev) ctx.db.debrisForecast.objectId.update(row);
     else ctx.db.debrisForecast.insert(row);
@@ -1303,6 +1316,7 @@ export const publishDebris = spacetimedb.reducer(
         impactLat: opt(c.impact?.lat),
         impactLon: opt(c.impact?.lon),
         footprint: JSON.stringify(c.footprint?.bands ?? []),
+        pHazard: num(c.p_hazard, -1),
       });
     }
     for (const tr of (r.sample_tracks ?? []).slice(0, 80)) {
@@ -1324,6 +1338,8 @@ export const publishDebris = spacetimedb.reducer(
       areaKm2_90: row.areaKm2_90,
       tier,
       computedAt: ctx.timestamp,
+      pHazard: row.pHazard,
+      hazardPiecesMean: row.hazardPiecesMean,
     });
     ctx.db.computeRun.insert({
       id: 0n,
