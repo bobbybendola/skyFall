@@ -36,6 +36,8 @@ export function useSelectedDebris(objects: TrackedObject[], reentry: ReentryLook
         id: obj.id,
         archetype: live.archetypeId,
         source: 'live',
+        tier: live.tier,
+        device: live.device,
         n_particles: live.nParticles,
         breakup: parse(live.breakup, { t_unix_s: 0, lat: 0, lon: 0, alt_km: 0 }),
         p_any_survives: live.pAnySurvives,

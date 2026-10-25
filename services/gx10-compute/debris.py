@@ -41,7 +41,8 @@ MATERIALS = {
     # Inconel 718 (rocket engine parts): textbook values, CHECK before quoting
     "Inconel": {"density": 8190.0, "melt": 1609.0, "cp": 435.0, "fusion": 2.7e5, "emissivity": 0.3},
 }
-DRAG_COEFFICIENT = {"sphere": 0.92, "cylinder": 1.0}
+# Cd from docs/DEBRIS_MODEL.md §4 (check). Box and plate are the shapes in data/archetypes.
+DRAG_COEFFICIENT = {"sphere": 0.92, "cylinder": 1.0, "box": 1.1, "plate": 1.2}
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ def parse_components(archetype: dict, profile: dict) -> list[Component]:
             raw_count = float(raw.get("count", 1))
         except (TypeError, ValueError) as exc:
             raise ValueError("component dimensions, mass_kg and count must be numeric") from exc
-        expected_dims = {"sphere": 1, "cylinder": 2}.get(shape)
+        expected_dims = {"sphere": 1, "cylinder": 2, "box": 3, "plate": 3}.get(shape)
         if expected_dims is None:
             raise ValueError(f"unsupported v0 component shape: {shape}")
         if len(dims) != expected_dims or any(not math.isfinite(value) or value <= 0 for value in dims):
@@ -94,8 +95,10 @@ def parse_components(archetype: dict, profile: dict) -> list[Component]:
         structure_index = max(range(len(components)), key=lambda i: components[i].mass_kg)
         structure = components[structure_index]
         adjusted = structure.mass_kg + (target_mass - total_mass) / structure.count
+        # A catalog mass below the other parts cannot be absorbed by the structure.
+        # Keep the documented archetype masses so the debris job still publishes.
         if not math.isfinite(target_mass) or target_mass <= 0 or adjusted <= 0:
-            raise ValueError("profile mass cannot be reconciled with the archetype structure")
+            return components
         scale = (adjusted / structure.mass_kg) ** (1.0 / 3.0)
         components[structure_index] = Component(
             structure.name,
@@ -112,11 +115,17 @@ def _geometry(component: Component) -> tuple[float, float, float]:
     if component.shape == "sphere":
         radius = component.dims_m[0] / 2
         return math.pi * radius**2, 4 * math.pi * radius**2, radius
-    length, diameter = component.dims_m
-    radius = diameter / 2
-    projected_area = 0.5 * math.pi * radius * (radius + length)
-    surface_area = math.pi * diameter * length + 2 * math.pi * radius**2
-    return projected_area, surface_area, radius
+    if component.shape == "cylinder":
+        length, diameter = component.dims_m
+        radius = diameter / 2
+        projected_area = 0.5 * math.pi * radius * (radius + length)
+        surface_area = math.pi * diameter * length + 2 * math.pi * radius**2
+        return projected_area, surface_area, radius
+    # Box [l, w, h] and plate [l, w, t]. Mean projected area of a convex body is
+    # surface/4. Nose radius is half the smallest edge (thinner plates heat faster).
+    a, b, c = component.dims_m
+    surface_area = 2.0 * (a * b + a * c + b * c)
+    return surface_area / 4.0, surface_area, max(0.5 * min(a, b, c), 0.001)
 
 
 def _relative_velocity(r: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -134,6 +143,33 @@ def _bands(lat: np.ndarray, lon: np.ndarray, weights: np.ndarray) -> tuple[list[
     if not len(lat):
         return [], 0.0
     return sim.corridor_bands(lat, lon, weights)
+
+
+def _mean_or_none(values: np.ndarray) -> float | None:
+    if len(values) == 0:
+        return None
+    return float(values.mean())
+
+
+def _impact_point(lat: np.ndarray, lon: np.ndarray) -> dict | None:
+    """Centre the globe draws a line to. publish_debris stores impact.lat / impact.lon."""
+    if len(lat) == 0:
+        return None
+    return {"lat": float(np.median(lat)), "lon": float(np.median(lon))}
+
+
+def _breakup_point(r_km: np.ndarray, t_unix: np.ndarray, index: int) -> dict:
+    """80 km state of one forecast particle. The globe refuses to draw lines without this."""
+    r = torch.as_tensor(r_km[index : index + 1], dtype=torch.float64)
+    t = torch.as_tensor(t_unix[index : index + 1], dtype=torch.float64)
+    lat, lon = sim.eci_to_latlon(r, t)
+    alt = float(np.linalg.norm(r_km[index]) - sim.RE)
+    return {
+        "t_unix_s": float(t_unix[index]),
+        "lat": float(lat[0].item()),
+        "lon": float(lon[0].item()),
+        "alt_km": round(alt, 2),
+    }
 
 
 def simulate_component(
@@ -350,6 +386,8 @@ def predict_debris(
         casualty_area = (0.6 + np.sqrt(piece_areas)) ** 2
         p_survive = float(survived.mean())
         demise_values = output["demise_alt"][np.isfinite(output["demise_alt"])]
+        impact = _impact_point(lat_values, lon_values)
+        demise_mean = float(demise_values.mean()) if len(demise_values) else None
         component_results.append(
             {
                 "name": component.name,
@@ -359,19 +397,29 @@ def predict_debris(
                 "mass_kg_start": component.mass_kg,
                 "p_survive": p_survive,
                 "p_unresolved": float(output["unresolved"].mean()),
-                "mass_kg": {"mean": float(mass_values.mean()) if len(mass_values) else 0.0},
+                # mass_kg.start / demise_alt_km.mean / impact are what publish_debris stores.
+                "mass_kg": {
+                    "start": component.mass_kg,
+                    "mean": float(mass_values.mean()) if len(mass_values) else 0.0,
+                },
                 "max_temperature_k_mean": float(output["max_temp"].mean()),
                 "max_heat_flux_w_m2_max": float(output["max_heat_flux"].max()),
-                "impact_speed_ms": {"mean": float(speed_values.mean()) if len(speed_values) else 0.0},
-                "impact_energy_j": {"mean": float(energy_values.mean()) if len(energy_values) else 0.0},
+                "impact_speed_ms": {"mean": _mean_or_none(speed_values)},
+                "impact_energy_j": {"mean": _mean_or_none(energy_values)},
                 "impact_time_unix": {
                     "q05": float(np.percentile(impact_times, 5)) if len(impact_times) else None,
                     "q50": float(np.percentile(impact_times, 50)) if len(impact_times) else None,
                     "q95": float(np.percentile(impact_times, 95)) if len(impact_times) else None,
                 },
-                "demise_alt_km_mean": float(demise_values.mean()) if len(demise_values) else None,
+                "demise_alt_km": {"mean": demise_mean},
+                "demise_alt_km_mean": demise_mean,
+                "impact": impact,
                 "casualty_area_m2_mean": float(casualty_area.sum()) * component.count / n,
-                "footprint": {"bands": bands, "area_km2_90": area},
+                "footprint": {
+                    "bands": bands,
+                    "area_km2_90": area,
+                    "center": None if impact is None else [impact["lon"], impact["lat"]],
+                },
             }
         )
         if len(lat_values):
@@ -399,6 +447,7 @@ def predict_debris(
         "archetype_confidence": archetype.get("confidence", "low"),
         "archetype_sources": archetype.get("sources", []),
         "n_particles": n,
+        "breakup": _breakup_point(r_samples, t_samples, track_index),
         "device": (
             str(torch.device(f"cuda:{torch.cuda.current_device()}"))
             if device.type == "cuda"

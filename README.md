@@ -39,7 +39,7 @@ Diagram, tables and reducers: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Phys
 - Public orbit data is kilometre-accurate, and re-entry timing is uncertain by hours days out. We show distributions and zones, never pinpoints.
 - We don't know any operator's internal design. Archetypes are generic and sourced, and results can be wrong for a specific satellite.
 - Simplified physics: no winds, no detailed break-up mechanics, tumbling-averaged heating.
-- The initial `/debris` implementation supports spheres and cylinders only. Its default mode requires CUDA and refuses to silently run on CPU; `USE_GPU=0` is an explicit degraded mode. The API has not yet been connected to the SpacetimeDB DEBRIS job flow or run on the ASUS GX10.
+- `/debris` is connected to the SpacetimeDB DEBRIS job flow: `publish_forecast` queues a job for objects likely to re-enter within 72 hours, `request_debris` queues one object on demand, the worker calls `/debris`, and `publish_debris` streams the result to the globe. Spheres, cylinders, boxes and plates are flown (boxes and plates use a tumbling-average area). CUDA is required unless `USE_GPU=0`, which is the labeled CPU fallback. A live GX10 run is still required before the demo; follow `docs/DEMO_RUNBOOK.md`. The globe shows **DEBRIS MOCK** until that result exists.
 
 ## How we used the tools (fill in before submission)
 - SpacetimeDB: the backend: feeds, GPU job chain with failover, archive, live sync of results

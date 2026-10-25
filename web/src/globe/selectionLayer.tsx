@@ -21,7 +21,7 @@ import {
 } from 'cesium';
 import { altitudeInfo, altitudeText, sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
-import { dangerText, type DebrisResult } from './debrisTypes.ts';
+import { dangerText, debrisSourceTag, type DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
 import { EntryDot, localTime, relTime, useClockNow } from './legend.tsx';
 import { DANGER_P } from './pointStyle.ts';
@@ -216,7 +216,13 @@ export function SelectedCard({
       )}
       {debris && (
         <div>
-          {debris.source === 'mock' ? <span className="mock">MOCK</span> : <span className="muted">modeled estimate ({debris.archetype}) ·</span>} debris: {dangerText(debris)} ·{' '}
+          {debris.source === 'mock' ? (
+            <span className="mock">DEBRIS MOCK</span>
+          ) : (
+            <span className="live-pill">{debrisSourceTag(debris).text}</span>
+          )}{' '}
+          <span className="muted">{debris.source === 'mock' ? 'placeholder, not computed · ' : `modeled estimate (${debris.archetype}) · `}</span>
+          debris: {dangerText(debris)} ·{' '}
           {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
         </div>
       )}

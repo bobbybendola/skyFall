@@ -1,5 +1,7 @@
+import json
 import math
 import unittest
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -39,12 +41,51 @@ class DebrisModelTests(unittest.TestCase):
     def test_v0_rejects_unimplemented_shapes(self) -> None:
         archetype = {
             "components": [
-                {"name": "panel", "material": "CFRP", "shape": "plate", "mass_kg": 2, "dims_m": [1, 1, 0.1]}
+                {"name": "panel", "material": "CFRP", "shape": "cone", "mass_kg": 2, "dims_m": [1, 1, 0.1]}
             ]
         }
 
         with self.assertRaisesRegex(ValueError, "unsupported v0 component shape"):
             debris.parse_components(archetype, {})
+
+    def test_profile_mass_below_other_parts_keeps_archetype_masses(self) -> None:
+        archetype = {
+            "components": [
+                {"name": "bus", "material": "Al6061", "shape": "sphere", "mass_kg": 8, "dims_m": [1], "count": 1},
+                {"name": "wheel", "material": "SS304", "shape": "sphere", "mass_kg": 4, "dims_m": [0.2], "count": 1},
+            ]
+        }
+
+        components = debris.parse_components(archetype, {"mass_kg": 3})
+
+        self.assertEqual(components[0].mass_kg, 8)
+        self.assertEqual(components[1].mass_kg, 4)
+
+    def test_shipped_archetypes_parse(self) -> None:
+        root = Path(__file__).resolve().parents[3] / "data" / "archetypes"
+        files = sorted(root.glob("*.json"))
+        self.assertGreaterEqual(len(files), 4)
+        for path in files:
+            arch = json.loads(path.read_text())
+            components = debris.parse_components(arch, {})
+            self.assertGreater(len(components), 0, path.name)
+
+    def test_box_and_plate_take_a_step(self) -> None:
+        radius_km = sim.RE + 80
+        speed_km_s = math.sqrt(sim.MU / radius_km)
+        for shape, dims in (("box", (0.4, 0.3, 0.2)), ("plate", (1.0, 0.5, 0.02))):
+            result = debris.simulate_component(
+                debris.Component("part", "Al6061", shape, 1.0, dims, 1),
+                np.array([[radius_km, 0.0, 0.0]]),
+                np.array([[0.0, speed_km_s, 0.0]]),
+                np.array([1_800_000_000.0]),
+                ConstantAtmosphere(),
+                torch.device("cpu"),
+                track_index=0,
+                dt=0.5,
+                max_flight_s=1.0,
+            )
+            self.assertEqual(result["steps"], 2, shape)
 
     def test_component_simulation_returns_bounded_track(self) -> None:
         component = debris.Component("test sphere", "Ti6Al4V", "sphere", 2, (0.2,), 1)
@@ -141,7 +182,13 @@ class DebrisModelTests(unittest.TestCase):
         self.assertEqual(result["device"], "cpu")
         self.assertEqual(result["n_particles"], 1)
         self.assertIn("Modeled estimate", result["note"])
-        self.assertEqual(result["components"][0]["p_survive"], 0.0)
+        component = result["components"][0]
+        self.assertEqual(component["p_survive"], 0.0)
+        self.assertEqual(component["mass_kg"]["start"], 1)
+        self.assertIsNone(component["impact"])
+        self.assertIsInstance(component["demise_alt_km"]["mean"], float)
+        self.assertEqual(set(result["breakup"]), {"t_unix_s", "lat", "lon", "alt_km"})
+        self.assertGreater(result["breakup"]["alt_km"], 70)
 
 
 if __name__ == "__main__":
