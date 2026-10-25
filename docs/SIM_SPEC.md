@@ -7,7 +7,7 @@
 > - Density: NRLMSIS 2.1 (pymsis) at the current F10.7 / Ap, averaged over latitude and longitude.
 > - Ballistic coefficient calibrated per object so the simulated mean-motion decay matches the observed `MEAN_MOTION_DOT`; BSTAR fallback marked "uncalibrated".
 > - Particle parameters θ = (log drag factor, along-track, radial, cross-track offsets). Prior spreads widen with Kp and element age.
-> - Re-entry = crossing 80 km; output = time quantiles, share re-entering inside the horizon, and 50/90% highest-density regions of the re-entry points (1° grid, smoothed).
+> - Re-entry = crossing 80 km. Each particle's inertial state at the crossing is kept (Hermite interpolation inside the step) in the per-object cache, as the start of the debris model (`/debris`); output = time quantiles, share re-entering inside the horizon, and 50/90% highest-density regions of the re-entry points (1° grid, smoothed).
 > - Sightings: likelihood on re-entry time (σ 300 s) and distance to the observer (σ 400 km) with a trust-based outlier floor; when ESS < 10% the engine fits a Gaussian proposal in θ to the weighted particles (×1.5 widened), re-propagates, and re-weights with prior/proposal (adaptive importance sampling).
 > - Defaults: GPU 20,000 particles per object, 10-day horizon; CPU (degraded) 300 particles, 3 days.
 > - Measured on a laptop CPU: ~3.5M particle-steps/s. A full GPU run (70 objects × 20k × days of steps) is ~10¹⁰ particle-steps.

@@ -2,10 +2,28 @@
 
 Goal: for one object predicted to re-enter, estimate which pieces survive to the ground, how big they are, what they're made of, and where they land, with probabilities. It runs on the GX10. Everything below is a **simplified, documented model** (a lumped-mass "object-oriented" approach like NASA DAS / ESA DRAMA-SARA, much reduced). It is not an operator assessment. Constants marked **check** must be verified against the cited sources before the demo, and this file updated.
 
-## Implementation status
-`POST /debris` has an initial sphere-and-cylinder implementation. It reuses the forecast engine's 80 km particle states, propagates each component with Torch RK4, drag and lumped heating, and returns component survival estimates, impact footprints and representative tracks. It uses CUDA when `USE_GPU=1` (the default) and returns HTTP 503 if CUDA is unavailable; `USE_GPU=0` is an explicit, labeled CPU-degraded mode limited to 100 particles and three components. This version does not implement breakup-altitude variation, parent/child shielding, boxes or plates, or component-orientation dynamics.
-
-The numerical material, aerodynamic and heating constants below remain unverified assumptions. The current implementation applies 15% of the shape's surface area as effective heating area; this is a model knob, not a validated material or aerodynamic constant. Repeated components share the same sampled trajectory, and components are released together at 80 km. Outputs are **modeled estimates**, not operational predictions. A successful CPU unit test does not establish GPU or GX10 performance; the endpoint's reported `device`, `gpu_name` and `tier` must be checked on the actual GX10.
+> **Implemented (debris-v1) in `services/gx10-compute/debris.py`, served at `POST /debris`.** Where it differs from or settles the text below:
+> - **Start states:** the forecast now keeps each particle's inertial state at the 80 km crossing (Hermite interpolation inside the 30 s step; test: altitude within 0.5 km of 80). `/debris` resamples them from the cached forecast, or runs the forecast for that object if the cache is cold. Each state keeps its particle's drag factor for the intact-body phase. A natural decay enters at about −0.9° and 7.26 km/s relative to the air. A request may instead give a nominal `entry` state (tests, past cases); its defaults are those values.
+> - **Batching:** one row per particle × component copy (`count` is expanded, each copy jittered), all on one device. Finished rows are compacted away.
+> - **Integration:** second-order Strang split: half a drag step, velocity-Verlet gravity (two-body + J2), half a drag step. Drag decays the air-relative velocity exponentially with k frozen over the half step, so slow light pieces stay stable (k·dt ≫ 1 is fine). At dt 0.5 s the impact point is within 5 km of a 10× finer step (unit test). dt 0.5 s while anything is hypersonic (> 1 km/s), then 2 s. Degraded mode uses 1 s / 4 s. Flight is capped at 2 h of sim time; pieces still flying are reported in `n_unresolved`.
+> - **Geometry:** mean tumbling cross-section A = S/4 (Cauchy's formula for convex bodies; exact for spheres). Nose radius: sphere d/2, cylinder D/2, box and plate √(A/π) (**check**). Radiating area = S. Dimensions shrink with (m/m₀)^⅓.
+> - **Heating:** Q = q · A with q = min(Sutton–Graves, ½ρv³). The cap is the free-molecular limit, for the rarefied top of the flight. ±20% lognormal model-error jitter per row. Radiation εσ(T⁴ − 250⁴)·S.
+> - **Who heats when:** top-level components are the outside of the intact body and heat from 80 km, flying on the intact-body drag until h_b. Components with a `parent` are shielded (no heating, the parent's drag) until the parent demises or h_b − U(0, 5) km. (The spec text in §4 said "h_b + U(0, 5)", read as a typo.) One level of nesting only.
+> - **Archetype field `parent` (optional):** the name of another component that contains this one. A missing, self or nested parent is dropped with a warning.
+> - **Jitter (1σ lognormal, per row):** mass 10%, dims 5%, Cd 10%, heating 20%. h_b ~ U(72, 84) km per particle.
+> - **Casualty area:** only pieces with impact energy ≥ 15 J count (NASA-STD-8719.14 threshold; confirmed in secondary sources, see below).
+> - **Degraded (CPU default):** 100 particles, the main structure (name contains "structure"/"bus", else the heaviest) + the two heaviest other components, coarse steps.
+> - **Materials:** request `materials` > `data/materials.json` (R3) > the built-in copy of the §3 table. Keys `density, melt_k, cp, h_fusion, emissivity` (common spellings accepted), as `{name: {...}}` or `[{id, ...}]`.
+> - **GPU guard:** with `USE_GPU=1` and no CUDA, `/debris` returns 503 instead of running on CPU, so a GPU-tier worker never publishes CPU results. `USE_GPU=0` is the explicit, labeled degraded mode. `/health` reports `debris_mode` (`gpu`, `cpu_degraded`, `unavailable`) and `debris_available`.
+> - **Fields the reducer and globe read:** `breakup {t_unix_s, lat, lon, alt_km}` (median top-level release point), `note`, per component `mass_kg.start` and `impact {lat, lon}` (median impact). Diagnostics: per component `p_unresolved`, `impact_time` quantiles, `max_temperature_k`, `max_heat_flux_w_m2`; top level `archetype_name`, `archetype_sources`, `gpu_name`, `tier`.
+> - **Example response** (test fixture, for building the globe): `services/gx10-compute/examples/debris-example.json`. Tests: `cd services/gx10-compute && python -m pytest -q tests` (needs `pytest httpx`).
+>
+> **Notes for archetype authors (R3), from the unit runs:**
+> - Cylinder `dims_m` is **[length, diameter]**. A reaction wheel is a disc, e.g. `[0.10, 0.25]`, not a rod `[0.25, 0.10]`. The rod heats far faster: 5% survival vs 75%.
+> - A whole bus as one solid box survives almost always (lumped mass: all of it must melt). Model the structure as several panels (`plate`, realistic thickness and mass), the way DAS/ORSAT break structures up, or the debris totals will be dominated by an unrealistic surviving bus.
+> - Results are sensitive to emissivity: stainless at 0.35 vs 0.8 (oxidised) moves a steel part from 5% to 65% survival. Pick and source it deliberately.
+>
+> **Check status (Oct 24):** Sutton–Graves k: secondary sources quote 1.74e-4 to 1.75e-4 SI for Earth (we use 1.7415e-4); the original NASA TR R-376 was not retrieved, so this is still **check**. 15 J casualty threshold: confirmed. Casualty area (0.6 + √A)²: not yet confirmed against the standard's text, still **check**. Cd by shape and the box/plate nose radius: still **check**.
 
 ## Pipeline
 ```
@@ -19,10 +37,10 @@ forecast particles (sim.py) ──► state at 80 km for each particle (r, v, t)
         └─ for every (particle × component): 3-DOF flight to the ground with heating
               → demised (altitude where it burned up) or survived (impact lat/lon/time, mass, speed, energy)
 ```
-Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 including multiples) × at most 3,600 half-second steps per component in v0. The component flight and heating calculations run as GPU tensors in default mode; footprint contour extraction is CPU-side.
+Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 including multiples) × steps (0.5 s steps over ~5–10 min of flight ≈ 600–1,200) ≈ 10⁸ component-steps per object. GPU tensors throughout.
 
 ## 1. Inputs
-- **Re-entry states:** the forecast keeps, per particle, the time of the 80 km crossing and its inertial position and velocity.
+- **Re-entry states:** the forecast keeps, per particle, the time of the 80 km crossing and its inertial position and velocity. (Change needed in `sim.py`: today it stores only time and lat/lon.)
 - **Profile:** mass, dimensions, shape and object type from `satellite_profile` (GCAT / SATCAT / DISCOSweb), mapped to an archetype.
 - **Space weather:** atmospheric density from NRLMSIS, as in the forecast.
 
@@ -42,8 +60,6 @@ Batch: P particles (default 2,000 on GPU, 100 on CPU) × C components (10–60 i
   ]
 }
 ```
-- Request body: `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}`. The object needs GP/OMM elements and forecast particles crossing 80 km. `n_particles` defaults to 2,000 on CUDA and 100 in explicit CPU-degraded mode.
-- `device`, `tier`, `degraded`, and `particle_steps` report actual compute execution; do not infer GPU use from configuration alone.
 - `dims_m`: box [l, w, h], plate [l, w, t], cylinder [length, diameter], sphere [diameter].
 - Masses scale to the profile's mass when it is known (the structure absorbs the difference); otherwise use the archetype's values.
 - Every number has a source or an "assumed" note. **The archetype is part of what we show judges.**
@@ -69,7 +85,7 @@ All values are **check** against ESA DRAMA/SESAM or ORSAT material tables.
 - **Energy:** `m c dT/dt = q·A_h − ε σ T⁴ A_s`. At T = T_melt the net heat goes into melting: `dm/dt = −(q·A_h − ε σ T⁴ A_s) / h_f`. Dimensions shrink with mass (keep the same shape).
 - **Demise:** m < 1% of the start mass, or below 0.01 kg. Record the demise altitude.
 - **Survive:** reaches the ground with mass > 0. Record time, lat/lon, mass, speed and impact energy ½mv².
-- **Children of a box/bus:** parent structure first (shields its contents), then children are released at a parent-demise altitude or at h_b + U(0, 5) km (simple; check DAS "parent-child" logic).
+- **Children of a box/bus:** parent structure first (shields its contents), then children are released at a parent-demise altitude or at h_b − U(0, 5) km, whichever comes first (simple; check DAS "parent-child" logic). Mark a child with `"parent": "<component name>"` in the archetype.
 
 ## 5. Outputs per object (`/debris` response)
 ```json
@@ -84,10 +100,22 @@ All values are **check** against ESA DRAMA/SESAM or ORSAT material tables.
      "demise_alt_km": {"mean": null}, "footprint": {"bands": [{"level": 50, "polygon": [[lon, lat], "..."]}, {"level": 90, "polygon": "..."}]}}
   ],
   "footprint": {"bands": ["...all survivors combined..."], "area_km2_90": 41000},
-  "sample_tracks": [{"component": "reaction wheel", "points": [[t_unix, lat, lon, alt_km], "..."]}]
+  "sample_tracks": [{"component": "reaction wheel", "points": [[t_s, lat, lon, alt_km], "..."]}]
 }
 ```
-- `sample_tracks`: one representative falling trajectory per component in v0, downsampled (≤ 60 points each), for the 3D animation. Times are Unix seconds; impacts beyond the 30-minute integration limit remain unresolved and are reported separately.
+- `sample_tracks`: a few representative falling trajectories per component, downsampled (≤ 60 points each), for the 3D animation.
+  - Each is `{component, survived, points}`, with points `[t_unix, lat, lon, alt_km]` from 80 km to the ground (`survived: true`) or to the demise altitude.
+  - Up to two surviving and one demised track per component.
+- Implemented extras (debris-v1):
+  - **Top level:**
+    - `label: "modeled estimate"`, `model`, `archetype_confidence`, `degraded`, `n_pieces_per_particle`
+    - `impact_time` / `entry_time` (`q05`, `q50`, `q95` ISO)
+    - `n_unresolved`, `warnings` (e.g. mass scaling, degraded cuts), `particle_steps` (row-steps, for `compute_run`), `steps`
+    - `entry` (`source: forecast|entry`, cache reuse, `decayed_frac`, `bc_m2_kg`, `calibrated`)
+  - **Per component:** `shape`, `parent`, `mass_kg_start`, `flight_s` (80 km → impact). Stats are `{mean, p05, p95}`, or `{mean: null}` when nothing survived or demised.
+  - **Every `footprint`:** also `center: [lon, lat]`, the median impact point, for the globe's satellite→landing line. Per component it also has `samples: [[lon, lat], …]`, up to 40 sampled impacts, for one line per sampled impact when the footprint is wide.
+  - Footprint rings use a local grid whose cell adapts to the spread. Longitudes stay continuous across ±180°, so they may exceed 180.
+  - A bad archetype or missing input returns HTTP 422 with the reason, for `fail_job`.
 - Casualty area per surviving piece: `A_c = (0.6 + sqrt(A_i))²` m² (NASA DAS form, 0.36 m² person; check NASA-STD-8719.14).
 
 ## 6. In-orbit breakup (stretch: `/fragment`)

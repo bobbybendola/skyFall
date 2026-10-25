@@ -152,7 +152,7 @@ Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so
 Target: tap to visible change in about 2 seconds. New sightings arriving while an UPDATE runs coalesce into the next one.
 
 ## gx10-compute API
-- `POST /debris` → body `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, seed?, as_of?}` → see `docs/DEBRIS_MODEL.md` §5. CUDA is required by default; `USE_GPU=0` explicitly opts into CPU-degraded mode. The SpacetimeDB DEBRIS job flow remains planned.
+- `POST /debris` (built, `debris.py`) → body `{object: {id, elements}, profile: {...}, archetype: {...}, space_weather?, n_particles?, materials?, entry?, as_of?, degraded?, seed?}` → see `docs/DEBRIS_MODEL.md` §5. `entry` (a nominal 80 km state) replaces the forecast for tests and past cases; `materials` overrides `data/materials.json`; `degraded` defaults to true off CUDA. With `USE_GPU=1` and no CUDA it returns 503 (`USE_GPU=0` opts into CPU-degraded mode). Bad input → 422 with the reason (worker: `fail_job`). Each `footprint` JSON also carries `center` (and per component `samples`) for the globe's landing lines; no table fields change
 - `POST /fragment` (stretch) → body `{parent: {id, elements, mass_kg}, kind, params}` → fragment snapshots + decay dates
 - `POST /forecast` → body `{objects: [{id, elements (GP/OMM JSON)}], space_weather?: {kp, f107}, as_of?}` → `{results: [{id, status, t_quantiles: {"5","25","50","75","95"}, decayed_frac, bands, area_km2_90, n_samples, ess, calibrated, bc_m2_kg}], ms, device, n_per_object, horizon_days, particle_steps}`. The physics is in `services/gx10-compute/sim.py`; see `docs/SIM_SPEC.md`
 - `GET /health` → GPU name, free memory, model status, `use_gpu`, `debris_mode`, `debris_available`

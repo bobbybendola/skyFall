@@ -34,7 +34,7 @@ Repo: https://github.com/bobbybendola/skyFall (private for now).
 |---|---|
 | SpacetimeDB module (`spacetimedb/`) | **Live on maincloud** as `skyfall-calhacks`. Queue, two lanes, failover, NOAA + CelesTrak feeds, forecasts, archives. Debris tables **not built yet** (contract in ARCHITECTURE.md) |
 | Forecast engine (`services/gx10-compute/sim.py`) | Done; ran on CPU for all 71 objects. Not yet run on the GX10 |
-| Debris model (`/debris`) | Initial sphere/cylinder endpoint implemented on `feat/gx10-debris-model`; GPU mode is CUDA-required, but not yet run on the ASUS GX10 or connected to the SpacetimeDB DEBRIS job flow |
+| Debris model (`/debris`) | debris-v1 built (`debris.py`, merged from `hank/ml-prediction` + `feat/gx10-debris-model`): all four shapes, parent/child, footprints, tracks; CUDA-required GPU mode. Not yet run on the ASUS GX10 |
 | Worker, operator console | Done for FORECAST; DEBRIS handler to add |
 | Web | 2D prototype (MapLibre) with live forecasts. **To be replaced by the 3D globe** |
 | Crowd sightings, replay, corridor | Parked (code stays, not in the demo) |

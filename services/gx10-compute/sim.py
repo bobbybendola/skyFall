@@ -47,7 +47,7 @@ FLAT = 1 / 298.257223563
 E2 = FLAT * (2 - FLAT)
 OMEGA_E = 7.292115e-5  # rad / s
 H_REENTRY = 80.0  # km
-ALT_GRID = (0.0, 1200.0)  # km, 1 km spacing for the density table
+ALT_GRID = (60.0, 1200.0)  # km, 1 km spacing for the density table
 
 # Prior spreads (1 sigma). Documented knobs.
 SIG_LOG_DRAG = 0.25  # calibration + density model error, before Kp widening
@@ -74,12 +74,12 @@ def kp_to_ap(kp: float) -> float:
 _density_cache: dict[tuple, np.ndarray] = {}
 
 
-def density_table(f107: float, kp: float, when: datetime) -> np.ndarray:
-    """log(rho [kg/m^3]) on a 1 km grid, NRLMSIS 2.1 averaged over lon/lat."""
-    key = (round(f107), round(kp, 1), when.strftime('%Y-%m-%dT%H'))
+def density_table(f107: float, kp: float, when: datetime, alt_grid: tuple[float, float] = ALT_GRID) -> np.ndarray:
+    """log(rho [kg/m^3]) on a 1 km grid from alt_grid[0], NRLMSIS 2.1 averaged over lon/lat."""
+    key = (round(f107), round(kp, 1), when.strftime('%Y-%m-%dT%H'), alt_grid)
     if key in _density_cache:
         return _density_cache[key]
-    alts = np.arange(ALT_GRID[0], ALT_GRID[1] + 1.0, 1.0)
+    alts = np.arange(alt_grid[0], alt_grid[1] + 1.0, 1.0)
     try:
         from pymsis import msis
 
@@ -188,9 +188,9 @@ def bstar_to_b(bstar: float) -> float:
 
 
 class Atmosphere:
-    def __init__(self, log_rho: np.ndarray, device: torch.device, dtype: torch.dtype):
+    def __init__(self, log_rho: np.ndarray, device: torch.device, dtype: torch.dtype, h0: float = ALT_GRID[0]):
         self.t = torch.tensor(log_rho, device=device, dtype=dtype)
-        self.h0 = ALT_GRID[0]
+        self.h0 = h0
         self.n = len(log_rho)
 
     def rho(self, h: torch.Tensor) -> torch.Tensor:
@@ -232,10 +232,18 @@ class PropResult:
     t_reentry: torch.Tensor  # unix seconds, NaN if survived the horizon
     lat: torch.Tensor
     lon: torch.Tensor
-    r_reentry: torch.Tensor  # inertial position in km at the 80 km crossing
-    v_reentry: torch.Tensor  # inertial velocity in km/s at the 80 km crossing
     steps: int
     particle_steps: int
+    r_reentry: torch.Tensor | None = None  # (P, 3) km, inertial, at the 80 km crossing (NaN if none)
+    v_reentry: torch.Tensor | None = None  # (P, 3) km/s
+
+
+def _hermite(r0, v0, r1, v1, f, dt):
+    """Cubic Hermite state inside one step; f in [0, 1] per row (shape (n, 1))."""
+    f2, f3 = f * f, f * f * f
+    r = (2 * f3 - 3 * f2 + 1) * r0 + (f3 - 2 * f2 + f) * dt * v0 + (-2 * f3 + 3 * f2) * r1 + (f3 - f2) * dt * v1
+    dr = ((6 * f2 - 6 * f) * r0 + (3 * f2 - 4 * f + 1) * dt * v0 + (-6 * f2 + 6 * f) * r1 + (3 * f2 - 2 * f) * dt * v1) / dt
+    return r, dr
 
 
 def propagate(
@@ -248,7 +256,10 @@ def propagate(
     dt: float = 30.0,
     compact_every: int = 200,
 ) -> PropResult:
-    """RK4 until each particle crosses H_REENTRY or the horizon ends."""
+    """RK4 until each particle crosses H_REENTRY or the horizon ends.
+
+    Keeps each particle's inertial state at the crossing (Hermite interpolation
+    inside the step): the start of the debris model."""
     dev, dt_ = r0.device, r0.dtype
     P = r0.shape[0]
     t_re = torch.full((P,), float('nan'), device=dev, dtype=torch.float64)
@@ -280,8 +291,7 @@ def propagate(
             # linear interpolation of the crossing inside the step
             f = ((h_prev[down] - H_REENTRY) / (h_prev[down] - h[down]).clamp_min(1e-6)).clamp(0, 1)
             tc = t0_unix + (s + f.double()) * dt
-            rc = r_prev[down] + f[:, None] * (r[down] - r_prev[down])
-            vc = v_prev[down] + f[:, None] * (v[down] - v_prev[down])
+            rc, vc = _hermite(r_prev[down], v_prev[down], r[down], v[down], f[:, None], dt)
             la, lo = eci_to_latlon(rc, tc)
             gi = idx[down]
             t_re[gi] = tc
@@ -292,9 +302,9 @@ def propagate(
             keep = ~down
             r, v, b, h, idx = r[keep], v[keep], b[keep], h[keep], idx[keep]
             if r.shape[0] == 0:
-                return PropResult(t_re, lat_re, lon_re, r_re, v_re, s + 1, psteps)
+                return PropResult(t_re, lat_re, lon_re, s + 1, psteps, r_re, v_re)
         h_prev = h
-    return PropResult(t_re, lat_re, lon_re, r_re, v_re, n_steps, psteps)
+    return PropResult(t_re, lat_re, lon_re, n_steps, psteps, r_re, v_re)
 
 
 # ------------------------------------------------------------------ calibration
@@ -417,12 +427,12 @@ class ObjectState:
     t_re: np.ndarray
     lat: np.ndarray
     lon: np.ndarray
-    r_re: np.ndarray
-    v_re: np.ndarray
     bc: float
     calibrated: bool
     rv: tuple[np.ndarray, np.ndarray]
     meta: dict = field(default_factory=dict)
+    r_re: np.ndarray | None = None  # (N, 3) km inertial at the 80 km crossing (debris start)
+    v_re: np.ndarray | None = None  # (N, 3) km/s
 
 
 def _gauss_logpdf(x: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndarray:
@@ -519,6 +529,8 @@ class Engine:
         t_re = res.t_reentry.cpu().numpy()
         lat = res.lat.cpu().numpy().astype(np.float64)
         lon = res.lon.cpu().numpy().astype(np.float64)
+        r_re = res.r_reentry.cpu().numpy()
+        v_re = res.v_reentry.cpu().numpy()
 
         for j, (o, gp, r, v, age) in enumerate(prepared):
             sl = slice(j * self.n, (j + 1) * self.n)
@@ -533,12 +545,12 @@ class Engine:
                 t_re=t_re[sl],
                 lat=lat[sl],
                 lon=lon[sl],
-                r_re=res.r_re[sl].cpu().numpy().astype(np.float64),
-                v_re=res.v_re[sl].cpu().numpy().astype(np.float64),
                 bc=float(bc_np[j]),
                 calibrated=bool(ok_np[j]),
                 rv=(r, v),
                 meta={'age_days': age, 'f107': f107, 'kp': kp, 'atm': atm},
+                r_re=r_re[sl],
+                v_re=v_re[sl],
             )
             self.cache[o['id']] = st
             results.append(self._summarise(o['id'], st, np.ones(self.n) / self.n, []))
@@ -612,8 +624,8 @@ class Engine:
         st.t_re = res.t_reentry.cpu().numpy()
         st.lat = res.lat.cpu().numpy().astype(np.float64)
         st.lon = res.lon.cpu().numpy().astype(np.float64)
-        st.r_re = res.r_re.cpu().numpy().astype(np.float64)
-        st.v_re = res.v_re.cpu().numpy().astype(np.float64)
+        st.r_re = res.r_reentry.cpu().numpy()
+        st.v_re = res.v_reentry.cpu().numpy()
 
     def _summarise(self, oid: str, st: ObjectState, w: np.ndarray, scores: list) -> dict:
         decayed = np.isfinite(st.t_re)

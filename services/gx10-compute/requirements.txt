@@ -5,5 +5,6 @@ scipy>=1.13
 scikit-image>=0.24
 sgp4>=2.23
 pymsis>=0.10        # NRLMSIS 2.1 atmosphere; falls back to a static model if missing
+# tests: pip install pytest httpx   (python -m pytest -q tests)
 # torch: install separately. GX10: --index-url https://download.pytorch.org/whl/cu130
 #        laptop/CPU: --index-url https://download.pytorch.org/whl/cpu
