@@ -6,6 +6,8 @@
 //   WORKER_TIER=cpu  on the fallback laptop (only gets work when no GPU worker is healthy)
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Identity, Timestamp } from 'spacetimedb';
@@ -50,15 +52,43 @@ function note(msg: string): void {
 }
 const iso = (ts: Timestamp) => ts.toDate().toISOString();
 
-async function post(path: string, body: unknown, timeoutMs = FAST_TIMEOUT_MS): Promise<any> {
-  const r = await fetch(`${COMPUTE}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+// Uses node:http, not fetch: fetch (undici) drops any request whose response
+// headers take over 5 min, which cut off full-size GPU forecasts. Here the
+// only limit is timeoutMs (the lane's lease).
+function post(path: string, body: unknown, timeoutMs = FAST_TIMEOUT_MS): Promise<any> {
+  const url = new URL(`${COMPUTE}${path}`);
+  const data = Buffer.from(JSON.stringify(body));
+  const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const req = send(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': data.length },
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+      res => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('error', reject);
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          const status = res.statusCode ?? 0;
+          if (status < 200 || status >= 300) {
+            reject(new Error(`compute ${path} HTTP ${status}: ${text.slice(0, 200)}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(text));
+          } catch (e) {
+            reject(new Error(`compute ${path} returned invalid JSON: ${String(e)}`));
+          }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.end(data);
   });
-  if (!r.ok) throw new Error(`compute ${path} HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return r.json();
 }
 
 // ---------------------------------------------------------------- heartbeat
