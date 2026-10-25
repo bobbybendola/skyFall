@@ -36,21 +36,24 @@ function addBand(ds: CustomDataSource, id: string, band: Band, color: Color, wid
   return [fill, outline];
 }
 
-export function useImpactZones(viewer: Viewer | null, debris: DebrisResult | null, only: boolean): void {
+export function useImpactZones(viewer: Viewer | null, debris: DebrisResult | null, only: boolean, focus: string | null = null): void {
   useEffect(() => {
     if (!viewer || !debris) return;
     const ds = new CustomDataSource('g2-impact-zones');
     viewer.dataSources.add(ds);
     const mock = debris.source === 'mock';
 
-    // Combined footprint first (underneath), then the components.
-    debris.footprint.bands.forEach((b, i) => {
-      for (const e of addBand(ds, `debris-zone:${debris.id}:all:${b.level}:${i}`, b, COMBINED_COLOR, b.level === 50 ? 2.5 : 1.5)) {
-        registerPick(e, { component: null, kind: 'zone', level: b.level, mock });
-      }
-    });
+    // Combined footprint first (underneath), then the components. A part focused in the
+    // model viewer shows alone: no combined footprint, and the survival filter is ignored.
+    if (!focus) {
+      debris.footprint.bands.forEach((b, i) => {
+        for (const e of addBand(ds, `debris-zone:${debris.id}:all:${b.level}:${i}`, b, COMBINED_COLOR, b.level === 50 ? 2.5 : 1.5)) {
+          registerPick(e, { component: null, kind: 'zone', level: b.level, mock });
+        }
+      });
+    }
     debris.components.forEach((c, ci) => {
-      if (only && c.p_survive < MIN_SURVIVAL) return;
+      if (focus ? c.name !== focus : only && c.p_survive < MIN_SURVIVAL) return;
       const color = materialColor(c.material);
       c.footprint.bands.forEach((b, i) => {
         for (const e of addBand(ds, `debris-zone:${debris.id}:${ci}:${b.level}:${i}`, b, color, b.level === 50 ? 2.5 : 1.5)) {
@@ -61,5 +64,5 @@ export function useImpactZones(viewer: Viewer | null, debris: DebrisResult | nul
     return () => {
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
     };
-  }, [viewer, debris, only]);
+  }, [viewer, debris, only, focus]);
 }

@@ -55,7 +55,12 @@ export const showWarnings = store(false);
 /** Tooltip state: what is under the cursor (or pinned by a click), and where. */
 export const hovered = store<{ info: PickInfo; x: number; y: number; pinned: boolean } | null>(null);
 
-/** Components shown under the current toggle. */
-export function visibleComponents(components: DebrisComponent[], only: boolean): DebrisComponent[] {
+/** Satellite model viewer: the part being hovered or pinned there. While set, the globe
+ * shows only that part's lines and zones. */
+export const focusedPart = store<{ name: string; pinned: boolean } | null>(null);
+
+/** Components shown under the current toggle. A focused part shows alone, even below MIN_SURVIVAL. */
+export function visibleComponents(components: DebrisComponent[], only: boolean, focus: string | null = null): DebrisComponent[] {
+  if (focus) return components.filter(c => c.name === focus);
   return only ? components.filter(c => c.p_survive >= MIN_SURVIVAL) : components;
 }
