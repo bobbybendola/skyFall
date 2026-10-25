@@ -3,7 +3,7 @@
 // predicted landing point, colored by material; opacity and width by p_survive. Plus the
 // impact zones (impactZones.ts) and hover/click info. One call in Globe.tsx:
 //   const debrisUi = useDebrisLines(viewer, debris)  →  render {debrisUi}
-import { createElement, useEffect, type ReactElement } from 'react';
+import { createElement, useEffect, useState, type ReactElement } from 'react';
 import {
   ArcType,
   CallbackProperty,
@@ -21,9 +21,10 @@ import {
   type Viewer,
 } from 'cesium';
 import type { DebrisComponent, DebrisResult } from './debrisTypes.ts';
-import { hovered, materialColor, onlySurvivors, pickInfo, registerPick, visibleComponents } from './debrisPick.ts';
+import { hovered, materialColor, onlySurvivors, pickInfo, registerPick, showWarnings, visibleComponents } from './debrisPick.ts';
 import { useImpactZones } from './impactZones.ts';
 import { DebrisOverlay } from './debrisOverlay.tsx';
+import { breakupMs, useWarningLayer, WARNING_WINDOW_MS } from './warningLevels.ts';
 
 const MAX_SAMPLE_LINES = 12; // per component, when the real footprint has sampled impacts
 const MARKER_HEIGHT_M = 200; // landing markers just above the ellipsoid (no z-fighting)
@@ -174,5 +175,25 @@ export function useDebrisLines(viewer: Viewer | null, debris: DebrisResult | nul
     };
   }, [viewer, debris, only]);
 
-  return debris ? createElement(DebrisOverlay, { debris }) : null;
+  const warningAllowed = useWithinWarningWindow(viewer, debris);
+  const warn = showWarnings.use();
+  useWarningLayer(viewer, debris, warn, warningAllowed);
+
+  return debris ? createElement(DebrisOverlay, { debris, warningAllowed }) : null;
+}
+
+// True when the globe clock is within 24 h of the predicted break-up (re-checked each minute).
+function useWithinWarningWindow(viewer: Viewer | null, debris: DebrisResult | null): boolean {
+  const [within, setWithin] = useState(false);
+  useEffect(() => {
+    const t = breakupMs(debris);
+    const check = () => {
+      const now = viewer && !viewer.isDestroyed() ? JulianDate.toDate(viewer.clock.currentTime).getTime() : Date.now();
+      setWithin(t !== undefined && t - now <= WARNING_WINDOW_MS);
+    };
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  }, [viewer, debris]);
+  return within;
 }

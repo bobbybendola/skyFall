@@ -5,3 +5,7 @@
 .debris-tip.pinned { border-color: #9cc3ff; }
 .debris-tip .muted { color: #bbb; font-size: 11px; }
 .debris-tip .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; border: 1px solid #888; }
+.warn-toggle { top: 74px; flex-direction: column; align-items: flex-start; max-width: 340px; cursor: default; }
+.warn-toggle label { cursor: pointer; display: flex; gap: 6px; align-items: center; }
+.warn-legend { line-height: 1.5; }
+.warn-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; border: 1px solid #888; }

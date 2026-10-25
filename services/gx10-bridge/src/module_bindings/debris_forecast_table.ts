@@ -31,4 +31,5 @@ export default __t.row({
   hazardPiecesMean: __t.f64().name("hazard_pieces_mean"),
   hazardPiecesP95: __t.f64().name("hazard_pieces_p_95"),
   survivingMassFrac: __t.f64().name("surviving_mass_frac"),
+  hazardGrid: __t.string().name("hazard_grid"),
 });

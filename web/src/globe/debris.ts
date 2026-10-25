@@ -42,6 +42,7 @@ export function useSelectedDebris(objects: TrackedObject[], reentry: ReentryLook
         surviving_mass_kg: { mean: live.survivingMassKgMean, p95: live.survivingMassKgP95 },
         hazard: live.pHazard >= 0 ? { p_any: live.pHazard, pieces_mean: live.hazardPiecesMean, pieces_p95: live.hazardPiecesP95 } : null,
         surviving_mass_frac: live.survivingMassFrac >= 0 ? live.survivingMassFrac : null,
+        hazard_grid: live.hazardGrid ? parse(live.hazardGrid, null) : null,
         casualty_area_m2: { mean: live.casualtyAreaM2Mean },
         components: comps.map(c => ({
           name: c.name,

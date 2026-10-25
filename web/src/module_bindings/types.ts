@@ -134,6 +134,7 @@ export const DebrisForecast = __t.object("DebrisForecast", {
   hazardPiecesMean: __t.f64(),
   hazardPiecesP95: __t.f64(),
   survivingMassFrac: __t.f64(),
+  hazardGrid: __t.string(),
 });
 export type DebrisForecast = __Infer<typeof DebrisForecast>;
 
