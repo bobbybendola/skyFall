@@ -245,7 +245,7 @@ def _plate_impact_speed(dt_slow):
 
 def test_light_piece_impact_speed_converges():
     ref = _plate_impact_speed(0.05)
-    assert abs(_plate_impact_speed(0.25) - ref) < 0.1 * ref, (ref, _plate_impact_speed(0.25))
+    assert abs(_plate_impact_speed(2.0) - ref) < 0.05 * ref, (ref, _plate_impact_speed(2.0))  # the live step
 
 
 def test_hazard_metrics_consistent():

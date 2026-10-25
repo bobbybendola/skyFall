@@ -356,7 +356,7 @@ def fly(
     atm: Atmosphere,
     track_rows: torch.Tensor,
     dt_fast: float = 0.5,
-    dt_slow: float = 0.25,
+    dt_slow: float = 2.0,
 ) -> FlightResult:
     """Integrate all rows to demise or impact.
 
@@ -446,6 +446,24 @@ def fly(
         sp_new = torch.linalg.vector_norm(v_half - wr_new, dim=1)
         k_new = 0.5e3 * atm.rho(h_new) * sp_new * bc
         v_new = (v_half - wr_new) * torch.exp(-0.5 * k_new * dt)[:, None] + wr_new
+        # Below 1 km/s light pieces have k ~ g/v_term ~ 1-3 /s, so k dt >> 1 and the split
+        # above settles at far below terminal speed (a 2 s step lands a 0.5 kg plate at
+        # 5 m/s, not 12). There, use the exact solution of du/dt = -k u + g with k, g and
+        # the rotating-air velocity w frozen over the step: it reaches u = g/k (terminal
+        # speed) at any dt.
+        slow = sp < 1.0
+        if bool(slow.any()):
+            x = k * dt
+            kc = k.clamp_min(1e-30)
+            a = torch.where(x > 1e-3, -torch.expm1(-x) / kc, dt * (1 - 0.5 * x))  # int_0^dt e^-ks ds
+            b = torch.where(x > 1e-3, (dt - a) / kc, dt * dt * (0.5 - x / 6))  # int_0^dt of that
+            g0 = _gravity(r)
+            u = v - wr
+            r_s = r + u * a[:, None] + g0 * b[:, None] + dt * wr
+            v_s = u * torch.exp(-x)[:, None] + g0 * a[:, None] + wr
+            r_new = torch.where(slow[:, None], r_s, r_new)
+            v_new = torch.where(slow[:, None], v_s, v_new)
+            h_new = torch.where(slow, altitude(r_new), h_new)
         t_new = t_off + dt
         row_steps += r.shape[0]
         steps += 1
@@ -702,9 +720,7 @@ def run_debris(
     kp = float((sw or {}).get('kp') or 2.0)
     when = datetime.fromtimestamp(float(np.median(t_e)), timezone.utc)
     atm = Atmosphere(density_table(f107, kp, when, LOW_ALT_GRID), device, dt_, h0=LOW_ALT_GRID[0])
-    res = fly(r0, v0, t0, T, atm, track_rows, dt_fast=1.0 if degraded else 0.5, dt_slow=1.0 if degraded else 0.25)
-    # dt_slow: below 1 km/s light pieces have drag rate k ~ g/v_term ~ 1-3 /s; a 2 s step
-    # (k dt >> 1) under-reports their impact speed ~3x. 0.25 s matches 0.1 s.
+    res = fly(r0, v0, t0, T, atm, track_rows, dt_fast=1.0 if degraded else 0.5, dt_slow=4.0 if degraded else 2.0)
 
     # ---- aggregate
     st = res.state.reshape(P, K)
