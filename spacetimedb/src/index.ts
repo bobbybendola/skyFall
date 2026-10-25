@@ -10,6 +10,7 @@
 // (submitSighting -> submit_sighting, objectId -> object_id).
 import { schema, table, t, SenderError, ScheduleAt } from 'spacetimedb/server';
 import { Identity, Timestamp, TimeDuration } from 'spacetimedb';
+import { eciToGeodetic, degreesLat, degreesLong, gstime, json2satrec, propagate, type SatRec } from 'satellite.js';
 
 // ============================================================ config
 
@@ -32,6 +33,11 @@ const HEARTBEAT_STALE_BULK = 60n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
 const MIN_SUBMIT_GAP = 2n * SEC; // per reporter, LIVE/DEMO only
+// Stored satellite positions (object_position): recomputed from the elements on a timer.
+const POSITION_TICK = 5n * SEC;
+const POSITION_EVERY = 60n * SEC; // every object
+const POSITION_EVERY_NEAR = 5n * SEC; // ...and this often within POSITION_NEAR of the forecast re-entry
+const POSITION_NEAR = 3600n * SEC;
 const HOLD_BELOW_P = 0.2; // compute's inlier probability below this -> HELD
 
 const VERDICTS = ['PENDING', 'ACCEPTED', 'HELD', 'REJECTED'];
@@ -391,6 +397,24 @@ const workerRegistry = table(
   }
 );
 
+// Current position of each tracked object, recomputed from its elements every
+// POSITION_EVERY (POSITION_EVERY_NEAR close to re-entry). SGP4 for CelesTrak GP
+// elements; the replay's simple circular model for REPLAY objects. No row when
+// there is no valid position (decayed, or SGP4 fails). The globe still computes
+// its own positions so it can follow the clock; this is for everything else.
+const objectPosition = table(
+  { public: true },
+  {
+    objectId: t.string().primaryKey(),
+    lat: t.f64(),
+    lon: t.f64(), // -180..180
+    altKm: t.f64(), // above the WGS84 ellipsoid
+    at: t.timestamp(), // the instant this position is for
+    model: t.string(), // sgp4 | replay-circular
+    elementsEpoch: t.string(), // EPOCH of the elements used ('' for replay)
+  }
+);
+
 // Schedule tables (private). One scheduled function per table.
 const sweepTick = table(
   { public: false },
@@ -405,6 +429,10 @@ const noaaTick = table(
   { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
 );
 const celestrakTick = table(
+  { public: false },
+  { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
+);
+const positionTick = table(
   { public: false },
   { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
 );
@@ -436,6 +464,8 @@ const spacetimedb = schema({
   replayTick,
   noaaTick,
   celestrakTick,
+  objectPosition,
+  positionTick,
 });
 export default spacetimedb;
 
@@ -771,7 +801,16 @@ export const init = spacetimedb.init(ctx => {
   ctx.db.replayTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(REPLAY_TICK_EVERY) });
   ctx.db.noaaTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(NOAA_EVERY) });
   ctx.db.celestrakTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(CELESTRAK_EVERY) });
+  ensurePositionTick(ctx);
 });
+
+// init only runs on a database's first publish; sweep calls this too so an
+// updated (not wiped) database starts the position timer.
+function ensurePositionTick(ctx: AnyCtx): void {
+  if (ctx.db.positionTick.iter().next().done) {
+    ctx.db.positionTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(POSITION_TICK) });
+  }
+}
 
 // ============================================================ roles
 
@@ -1448,6 +1487,7 @@ export const reportComputeStatus = spacetimedb.reducer(
 // Every 2 s: expire job leases and mark silent workers unhealthy.
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
+  ensurePositionTick(ctx);
   const unhealthy = new Set<string>(); // fast lane: down after HEARTBEAT_STALE
   const gone = new Set<string>(); // bulk lane: reported unhealthy, or silent for HEARTBEAT_STALE_BULK
   for (const w of ctx.db.computeStatus.iter()) {
@@ -1601,3 +1641,85 @@ export const mySightings = spacetimedb.view(
   t.array(sighting.rowType),
   ctx => [...ctx.db.sighting.reporter.filter(ctx.sender)]
 );
+
+// ============================================================ positions
+
+const EARTH_ROT_DEG_S = 360 / 86164.0905;
+const MU_KM3_S2 = 398600.4418;
+const EARTH_R_KM = 6378.137;
+const wrapLon = (lon: number): number => ((((lon + 180) % 360) + 360) % 360) - 180;
+
+// Parsed SGP4 records, reused while an object's elements are unchanged.
+const satrecs = new Map<string, { elements: string; rec: SatRec | null }>();
+
+type Fix = { lat: number; lon: number; altKm: number; model: string; epoch: string };
+
+function positionOf(o: { id: string; source: string; elements: string }, when: Date): Fix | null {
+  let el: any;
+  try {
+    el = JSON.parse(o.elements);
+  } catch {
+    return null;
+  }
+  if (o.source === 'REPLAY' || el?.model) {
+    // Same circular model as web/src/orbit.ts stubGroundPoint and the compute stub.
+    const inc = ((el.inclination_deg ?? 51.6) * Math.PI) / 180;
+    const periodS = (el.period_min ?? 88) * 60;
+    const dt = when.getTime() / 1000 - (el.epoch ? Date.parse(el.epoch) / 1000 : 0);
+    const u = ((el.arg_lat_deg ?? 0) * Math.PI) / 180 + (2 * Math.PI * dt) / periodS;
+    const lat = (Math.asin(Math.sin(inc) * Math.sin(u)) * 180) / Math.PI;
+    const lon = wrapLon((el.raan_deg ?? 0) + (Math.atan2(Math.cos(inc) * Math.sin(u), Math.cos(u)) * 180) / Math.PI - EARTH_ROT_DEG_S * dt);
+    const altKm = Math.cbrt((MU_KM3_S2 * periodS * periodS) / (4 * Math.PI * Math.PI)) - EARTH_R_KM;
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon, altKm, model: 'replay-circular', epoch: '' } : null;
+  }
+  let cached = satrecs.get(o.id);
+  if (!cached || cached.elements !== o.elements) {
+    let rec: SatRec | null = null;
+    try {
+      rec = json2satrec(el);
+    } catch {
+      rec = null;
+    }
+    cached = { elements: o.elements, rec };
+    satrecs.set(o.id, cached);
+  }
+  if (!cached.rec) return null;
+  const pv = propagate(cached.rec, when);
+  if (!pv || typeof pv.position === 'boolean' || !pv.position) return null;
+  const geo = eciToGeodetic(pv.position, gstime(when));
+  const lat = degreesLat(geo.latitude);
+  const lon = degreesLong(geo.longitude);
+  // Below ~80 km SGP4 is meaningless (the object has re-entered).
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !(geo.height > 80)) return null;
+  return { lat, lon, altKm: geo.height, model: 'sgp4', epoch: String(el.EPOCH ?? '') };
+}
+
+export const updatePositions = spacetimedb.reducer({ onSchedule: positionTick }, { tick: positionTick.rowType }, ctx => {
+  requireScheduler(ctx);
+  const now = micros(ctx.timestamp);
+  const when = new Date(Number(now / 1000n));
+  for (const o of [...ctx.db.reentryObject.iter()]) {
+    const prev = ctx.db.objectPosition.objectId.find(o.id);
+    if (o.status === 'DECAYED') {
+      if (prev) ctx.db.objectPosition.objectId.delete(o.id);
+      continue;
+    }
+    const t50 = ctx.db.forecast.objectId.find(o.id)?.tQ50;
+    const near = t50 !== undefined && micros(t50) - now < POSITION_NEAR;
+    // Small slack so a 60 s period is not pushed to 65 s by the 5 s tick.
+    const every = (near ? POSITION_EVERY_NEAR : POSITION_EVERY) - SEC;
+    if (prev && !olderThan(ctx, prev.at, every)) continue;
+    const fix = positionOf(o, when);
+    if (!fix) {
+      if (prev) ctx.db.objectPosition.objectId.delete(o.id);
+      continue;
+    }
+    const row = { objectId: o.id, lat: fix.lat, lon: fix.lon, altKm: fix.altKm, at: ctx.timestamp, model: fix.model, elementsEpoch: fix.epoch };
+    if (prev) ctx.db.objectPosition.objectId.update(row);
+    else ctx.db.objectPosition.insert(row);
+  }
+  // Positions of objects that are no longer tracked.
+  for (const p of [...ctx.db.objectPosition.iter()]) {
+    if (!ctx.db.reentryObject.id.find(p.objectId)) ctx.db.objectPosition.objectId.delete(p.objectId);
+  }
+});

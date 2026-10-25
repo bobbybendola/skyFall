@@ -77,6 +77,7 @@ import FeedStatusRow from "./feed_status_table";
 import ForecastRow from "./forecast_table";
 import ForecastHistoryRow from "./forecast_history_table";
 import MySightingsRow from "./my_sightings_table";
+import ObjectPositionRow from "./object_position_table";
 import ReentryObjectRow from "./reentry_object_table";
 import ReplayStateRow from "./replay_state_table";
 import ReporterStatsRow from "./reporter_stats_table";
@@ -263,6 +264,17 @@ const tablesSchema = __schema({
       { name: 'forecast_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ForecastHistoryRow),
+  objectPosition: __table({
+    name: 'object_position',
+    indexes: [
+      { accessor: 'objectId', name: 'object_position_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'object_position_object_id_key', constraint: 'unique', columns: ['objectId'] },
+    ],
+  }, ObjectPositionRow),
   reentryObject: __table({
     name: 'reentry_object',
     indexes: [
