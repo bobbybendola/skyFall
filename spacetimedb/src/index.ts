@@ -25,6 +25,10 @@ const FORECAST_EVERY = 20n * 60n * SEC; // refresh all forecasts as time passes
 const DEBRIS_WITHIN = 72n * 3600n * SEC; // run debris for objects forecast to re-enter this soon
 const DEBRIS_MIN_P = 0.2; // ...with at least this chance inside the forecast horizon
 const HEARTBEAT_STALE = 10n * SEC;
+// A bulk job (FORECAST ~11 min at full size) is only taken back after this long a
+// heartbeat gap: a short Wi-Fi blip must not throw away minutes of GPU work.
+// A worker that reports healthy=false still loses its job at once.
+const HEARTBEAT_STALE_BULK = 60n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
 const MIN_SUBMIT_GAP = 2n * SEC; // per reporter, LIVE/DEMO only
@@ -1444,9 +1448,13 @@ export const reportComputeStatus = spacetimedb.reducer(
 // Every 2 s: expire job leases and mark silent workers unhealthy.
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
-  const unhealthy = new Set<string>();
+  const unhealthy = new Set<string>(); // fast lane: down after HEARTBEAT_STALE
+  const gone = new Set<string>(); // bulk lane: reported unhealthy, or silent for HEARTBEAT_STALE_BULK
   for (const w of ctx.db.computeStatus.iter()) {
-    if (!w.healthy || olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) unhealthy.add(w.worker.toHexString());
+    const id = w.worker.toHexString();
+    if (!w.healthy || olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) unhealthy.add(id);
+    if (!w.healthy && !olderThan(ctx, w.updatedAt, HEARTBEAT_STALE)) gone.add(id); // worker said so itself
+    if (olderThan(ctx, w.updatedAt, HEARTBEAT_STALE_BULK)) gone.add(id);
   }
   let forecastPending = false;
   let lastForecast = 0n;
@@ -1456,8 +1464,9 @@ export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: swee
       if (micros(j.createdAt) > lastForecast) lastForecast = micros(j.createdAt);
     }
     if (j.status !== 'CLAIMED') continue;
-    const lease = laneOf(j.kind) === 'bulk' ? LEASE_BULK : LEASE;
-    const holderDown = j.claimedBy ? unhealthy.has(j.claimedBy.toHexString()) : true;
+    const bulk = laneOf(j.kind) === 'bulk';
+    const lease = bulk ? LEASE_BULK : LEASE;
+    const holderDown = j.claimedBy ? (bulk ? gone : unhealthy).has(j.claimedBy.toHexString()) : true;
     if (!holderDown && !olderThan(ctx, j.claimedAt, lease)) continue;
     const giveUp = j.attempts >= MAX_ATTEMPTS;
     ctx.db.computeJob.id.update({
