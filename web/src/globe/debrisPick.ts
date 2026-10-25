@@ -25,7 +25,7 @@ export function pickInfo(entity: unknown): PickInfo | undefined {
   return entity && typeof entity === 'object' ? picks.get(entity as Entity) : undefined;
 }
 
-function store<T>(initial: T) {
+export function store<T>(initial: T) {
   let value = initial;
   const listeners = new Set<() => void>();
   return {

@@ -14,6 +14,7 @@ import {
   defined,
   Ellipsoid,
   Entity,
+  HeightReference,
   JulianDate,
   PolylineOutlineMaterialProperty,
   ScreenSpaceEventHandler,
@@ -27,7 +28,6 @@ import { DebrisOverlay } from './debrisOverlay.tsx';
 import { breakupMs, useWarningLayer, WARNING_WINDOW_MS } from './warningLevels.ts';
 
 const MAX_SAMPLE_LINES = 12; // per component, when the real footprint has sampled impacts
-const MARKER_HEIGHT_M = 200; // landing markers just above the ellipsoid (no z-fighting)
 
 /** Line look for a survival chance: faint and thin when unlikely, bold when likely. */
 export function lineStyle(p: number): { alpha: number; width: number } {
@@ -106,8 +106,9 @@ function addLines(ds: CustomDataSource, viewer: Viewer, debris: DebrisResult, co
     const marker = ds.entities.add(
       new Entity({
         id: `debris-land:${debris.id}:${ci}`,
-        position: Cartesian3.fromDegrees(land.lon, land.lat, MARKER_HEIGHT_M),
-        point: { pixelSize: 5 + 6 * c.p_survive, color: color.withAlpha(Math.max(alpha, 0.6)), outlineColor: outlineFor(color), outlineWidth: 1 },
+        position: Cartesian3.fromDegrees(land.lon, land.lat, 0),
+        // On the terrain, and drawn on top of hills in front of it.
+        point: { pixelSize: 5 + 6 * c.p_survive, color: color.withAlpha(Math.max(alpha, 0.6)), outlineColor: outlineFor(color), outlineWidth: 1, heightReference: HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY },
       })
     );
     registerPick(marker, { component: c, kind: 'line', mock });

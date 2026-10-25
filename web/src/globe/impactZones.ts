@@ -23,10 +23,10 @@ function addBand(ds: CustomDataSource, id: string, band: Band, color: Color, wid
   const fill = ds.entities.add(
     new Entity({
       id: `${id}:fill`,
-      polygon: { hierarchy: new PolygonHierarchy(pos), height: 0, material: color.withAlpha(FILL_ALPHA[band.level]) },
+      polygon: { hierarchy: new PolygonHierarchy(pos), material: color.withAlpha(FILL_ALPHA[band.level]) },
     })
   );
-  // Polygon outlines are 1 px on most WebGL platforms, so draw the outline as a ground-clamped line.
+  // No height: the fill is draped on the terrain. Polygon outlines are 1 px on most WebGL platforms, so draw the outline as a ground-clamped line.
   const outline = ds.entities.add(
     new Entity({
       id: `${id}:outline`,

@@ -9,9 +9,12 @@ import { DebrisList } from './globe/debrisList.tsx';
 import { useDebrisLines } from './globe/debrisLines.ts';
 import { Legend } from './globe/legend.tsx';
 import { SatModelPanel } from './globe/SatModelPanel.tsx';
+import { useDetailedMap } from './globe/mapLayers.ts';
+import { MapControls } from './globe/mapControls.tsx';
 
 function Layers() {
   const viewer = useViewer();
+  useDetailedMap(viewer); // Esri imagery + terrain (falls back to the offline globe)
   const { objects, reentry } = useTrackedObjects();
   useSatelliteLayer(viewer, objects, reentry); // G1
   useClickToSelect(viewer); // G1
@@ -23,6 +26,7 @@ function Layers() {
     <>
       {debrisUi}
       <Legend />
+      <MapControls viewer={viewer} />
       <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
       <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />
       <SatModelPanel objects={objects} debris={debris} />

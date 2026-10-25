@@ -1,6 +1,7 @@
-// One place for Cesium-wide setup. No Cesium ion account: imagery is the
+// One place for Cesium-wide setup. No Cesium ion account: the base layer is the
 // Natural Earth II texture that ships with Cesium (works offline), and nothing
-// requests ion assets (no terrain, no geocoder, no Bing imagery).
+// requests ion assets (no geocoder, no Bing imagery). Detailed keyless imagery
+// and terrain sit on top of it (mapLayers.ts).
 import {
   buildModuleUrl,
   ClockRange,
@@ -43,6 +44,10 @@ export function createViewer(container: HTMLElement): Viewer {
   const scene = viewer.scene;
   scene.globe.enableLighting = true; // day/night shading follows the clock
   scene.globe.showGroundAtmosphere = true;
+  // Terrain must not hide the satellites' lines and points behind hills.
+  scene.globe.depthTestAgainstTerrain = false;
+  // City-level zoom (imagery goes to about 1 m per pixel); stop just above the ground.
+  scene.screenSpaceCameraController.minimumZoomDistance = 30;
   return viewer;
 }
 
