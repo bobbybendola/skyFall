@@ -33,6 +33,8 @@ export type DebrisResult = {
   // pieces landing with >= 15 J (what NASA/ESA casualty tools count); null on older runs and the mock
   hazard?: { p_any: number; pieces_mean: number; pieces_p95: number } | null;
   surviving_mass_frac?: number | null;
+  // per ~110 km cell: runs (of n_runs) in which a dangerous piece lands there (#18)
+  hazard_grid?: { cell_deg: number; n_runs: number; cells: [number, number, number][]; truncated: boolean } | null;
   surviving_mass_kg: { mean: number; p95: number };
   casualty_area_m2: { mean: number };
   components: DebrisComponent[];

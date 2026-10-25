@@ -49,6 +49,9 @@ function store<T>(initial: T) {
 /** Toggle: hide components below MIN_SURVIVAL (lines and zones). Default on. */
 export const onlySurvivors = store(true);
 
+/** Toggle: warning-level cells (#18) on the globe. Default off. */
+export const showWarnings = store(false);
+
 /** Tooltip state: what is under the cursor (or pinned by a click), and where. */
 export const hovered = store<{ info: PickInfo; x: number; y: number; pinned: boolean } | null>(null);
 

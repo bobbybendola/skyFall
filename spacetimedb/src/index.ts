@@ -292,6 +292,9 @@ const debrisForecast = table(
     hazardPiecesMean: t.f64().default(-1),
     hazardPiecesP95: t.f64().default(-1),
     survivingMassFrac: t.f64().default(-1),
+    // JSON {cell_deg, n_runs, cells: [[lat_south, lon_west, runs]], truncated} for the
+    // warning-level layer (#18); '' when not computed
+    hazardGrid: t.string().default(''),
   }
 );
 
@@ -1254,6 +1257,13 @@ export const archiveCurrentElements = spacetimedb.reducer({}, ctx => {
   }
 });
 
+// Hazard grid as stored: '' when missing or implausibly large (the model keeps <= 5000 cells, ~100 kB).
+function gridJson(g: any): string {
+  if (!g || !Array.isArray(g.cells)) return '';
+  const s = JSON.stringify(g);
+  return s.length <= 400_000 ? s : '';
+}
+
 // result: JSON from gx10-compute /debris (docs/DEBRIS_MODEL.md §5).
 export const publishDebris = spacetimedb.reducer(
   { jobId: t.u64(), result: t.string(), jobMs: t.u32(), particleSteps: t.u64(), device: t.string() },
@@ -1296,6 +1306,7 @@ export const publishDebris = spacetimedb.reducer(
       hazardPiecesMean: num(r.hazard?.pieces_mean, -1),
       hazardPiecesP95: num(r.hazard?.pieces_p95, -1),
       survivingMassFrac: num(r.surviving_mass_frac, -1),
+      hazardGrid: gridJson(r.hazard_grid),
     };
     if (prev) ctx.db.debrisForecast.objectId.update(row);
     else ctx.db.debrisForecast.insert(row);
