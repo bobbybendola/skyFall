@@ -52,8 +52,9 @@ Source for the pitfalls below: a community DGX Spark setup guide (https://github
 1. SpacetimeDB reachable (local or hosted; decide in the first hour)
 2. `gx10-compute` (confirm `/health`)
 3. `gx10-bridge` (confirm it registers and reports `compute_status`)
-4. `feed-poller`
+4. `feed-poller` is planned and is not in the repo. Skip it.
 5. Big-screen web app and phone page
+6. `services/assistant` is optional. Without it, or without `XAI_API_KEY`, the globe button says "assistant offline".
 
 ## If setup fails
 - Set `USE_GPU=0` and a smaller `SIM_N` to keep building; the architecture is unchanged.

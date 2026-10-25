@@ -9,6 +9,7 @@ import { DebrisList } from './globe/debrisList.tsx';
 import { useDebrisLines } from './globe/debrisLines.ts';
 import { Legend } from './globe/legend.tsx';
 import { SatModelPanel } from './globe/SatModelPanel.tsx';
+import { AssistantPanel } from './globe/assistant.tsx';
 
 function Layers() {
   const viewer = useViewer();
@@ -40,6 +41,7 @@ export function Globe() {
         <span className={conn.isActive ? 'ok' : 'bad'}>{conn.isActive ? ' live' : ' connecting…'}</span>
         <a href="/2d">2D prototype</a>
       </div>
+      <AssistantPanel />
     </GlobeView>
   );
 }
