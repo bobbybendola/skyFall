@@ -5,7 +5,7 @@ Official sources and APIs only, no scraping. Orbital Radar (orbitalradar.com) is
 Who fetches:
 - NOAA SWPC and CelesTrak: scheduled procedures **inside the SpacetimeDB module**.
 - CelesTrak SATCAT decay dates for objects already in `elements_history`: the module's `outcome_poll` (one catalog number per request, at most 4 per 2 h).
-- Space-Track decay and TIP: the same procedure, only when the database has both `SPACETRACK_USER` and `SPACETRACK_PASS`. Otherwise the feeds are recorded as disabled. Large catalog downloads (GCAT, full SATCAT, DISCOSweb) stay in `services/feed-poller`.
+- Space-Track decay and TIP: the feed-poller (`services/feed-poller`, planned) on Steven's machine, which reads the login from his `.env` and sends rows through `report_outcome` (role `poller`). The module never holds Space-Track credentials. Large catalog downloads (GCAT, full SATCAT, DISCOSweb) stay in `services/feed-poller`.
 
 | Source | Used for | Status | Notes (**check** = verify before relying on it) |
 |---|---|---|---|
@@ -15,7 +15,7 @@ Who fetches:
 | CelesTrak SATCAT | Object type (PAY / R/B / DEB), owner, launch date, radar cross-section size, decay date | Real (decay dates built) | `https://celestrak.org/satcat/records.php?CATNR=<id>&FORMAT=json`. `CATNR` is one id. `DECAY_DATE` is `YYYY-MM-DD` or empty (verified 2026-10-25 on 23852 and 47782). Stored as 00:00:00Z |
 | GCAT (J. McDowell, planet4589.org) `satcat.tsv` | Mass, length, diameter, span, shape per object | Real catalog (planned) | Public. Many values are estimates flagged `?`; carry the flag into `confidence`. **Check** the column names in the `#` header |
 | ESA DISCOSweb | Mass, shape, dimensions, cross-section | Real catalog (planned, optional) | Free account + API token. **Check** the auth scheme and rate limits |
-| Space-Track (TIP, decay, GP history) | Official re-entry predictions, actual decay dates, historical elements for validation | Decay + TIP path built, off without credentials. Not called in the local test | One account, never shared; decay 1/day and TIP 1/hour, combined by NORAD id. `gp_history` is still not fetched (1/lifetime, needs the account) |
+| Space-Track (TIP, decay, GP history) | Official re-entry predictions, actual decay dates, historical elements for validation | `report_outcome` reducer ready; feed-poller not built yet | One account, never shared; decay 1/day and TIP 1/hour, combined by NORAD id. `gp_history` is still not fetched (1/lifetime, needs the account) |
 | Archetype component lists (`data/archetypes/`) | What each satellite class is made of | **Assumed**, from cited public sources | Every number cites a source or is marked "assumed" |
 | Material properties (`data/materials.json`) | Melting point, heat capacity, heat of fusion | Literature values | **Check** against ESA DRAMA / NASA ORSAT tables |
 | Recovered-debris cases (e.g. 2024 Dragon trunk pieces; Aerospace Corp re-entry database) | Validation | Real, public reports | **Check** the details and sources before quoting |

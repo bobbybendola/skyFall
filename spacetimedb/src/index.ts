@@ -12,6 +12,7 @@
 // (submitSighting -> submit_sighting, objectId -> object_id).
 import { schema, table, t, SenderError, ScheduleAt } from 'spacetimedb/server';
 import { Identity, Timestamp, TimeDuration } from 'spacetimedb';
+import { eciToGeodetic, degreesLat, degreesLong, gstime, json2satrec, propagate, type SatRec } from 'satellite.js';
 
 // The module host provides console. This package's tsconfig has no DOM lib.
 declare const console: { log: (message: string) => void };
@@ -28,8 +29,6 @@ const OUTCOME_EVERY = 6n * 3600n * SEC; // SATCAT decay dates + optional Space-T
 const SATCAT_MIN_GAP = 2n * 3600n * SEC;
 const SATCAT_BATCH = 4; // SATCAT CATNR is one object per request; stay well under a retry loop
 const SATCAT_PROBE_EVERY = 24n * 3600n * SEC;
-const SPACETRACK_DECAY_GAP = 24n * 3600n * SEC; // class/decay is 1/day; one combined query, never per object
-const SPACETRACK_TIP_GAP = 60n * 60n * SEC; // class/tip is 1/hour
 const HOUR_US = 3_600_000_000; // microseconds in an hour
 const OUTCOME_SOURCES = ['CELESTRAK_SATCAT', 'SPACETRACK_DECAY', 'SPACETRACK_TIP', 'OPERATOR'];
 // Higher wins. A feed must not overwrite a better official time, or an operator correction.
@@ -52,6 +51,11 @@ const HEARTBEAT_STALE_BULK = 60n * SEC;
 const WORKER_FORGET = 600n * SEC; // silent this long: remove from compute_status
 const MAX_ATTEMPTS = 3;
 const MIN_SUBMIT_GAP = 2n * SEC; // per reporter, LIVE/DEMO only
+// Stored satellite positions (object_position): recomputed from the elements on a timer.
+const POSITION_TICK = 5n * SEC;
+const POSITION_EVERY = 60n * SEC; // every object
+const POSITION_EVERY_NEAR = 5n * SEC; // ...and this often within POSITION_NEAR of the forecast re-entry
+const POSITION_NEAR = 3600n * SEC;
 const HOLD_BELOW_P = 0.2; // compute's inlier probability below this -> HELD
 
 const VERDICTS = ['PENDING', 'ACCEPTED', 'HELD', 'REJECTED'];
@@ -126,7 +130,7 @@ const computeJob = table(
     error: t.string(),
     // Set only on a single-object replay FORECAST. publish_forecast stores this
     // as the forecast's computed_at, and the worker passes it to /forecast as as_of.
-    asOf: t.timestamp().optional(),
+    asOf: t.timestamp().optional().default(undefined), // default: existing rows get none
   }
 );
 
@@ -309,6 +313,15 @@ const debrisForecast = table(
     device: t.string(),
     computedAt: t.timestamp(),
     note: t.string(),
+    // Danger measures (pieces landing with >= 15 J, as NASA/ESA casualty tools count).
+    // Added later, so they default to -1 = "not computed" on older rows.
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
+    hazardPiecesP95: t.f64().default(-1),
+    survivingMassFrac: t.f64().default(-1),
+    // JSON {cell_deg, n_runs, cells: [[lat_south, lon_west, runs]], truncated} for the
+    // warning-level layer (#18); '' when not computed
+    hazardGrid: t.string().default(''),
   }
 );
 
@@ -331,6 +344,7 @@ const debrisComponent = table(
     impactLat: t.f64().optional(),
     impactLon: t.f64().optional(),
     footprint: t.string(), // JSON bands
+    pHazard: t.f64().default(-1), // per copy, lands with >= 15 J; -1 = not computed
   }
 );
 
@@ -357,6 +371,8 @@ const debrisHistory = table(
     areaKm2_90: t.f64(),
     tier: t.string(),
     computedAt: t.timestamp(),
+    pHazard: t.f64().default(-1),
+    hazardPiecesMean: t.f64().default(-1),
   }
 );
 
@@ -464,6 +480,24 @@ const workerRegistry = table(
   }
 );
 
+// Current position of each tracked object, recomputed from its elements every
+// POSITION_EVERY (POSITION_EVERY_NEAR close to re-entry). SGP4 for CelesTrak GP
+// elements; the replay's simple circular model for REPLAY objects. No row when
+// there is no valid position (decayed, or SGP4 fails). The globe still computes
+// its own positions so it can follow the clock; this is for everything else.
+const objectPosition = table(
+  { public: true },
+  {
+    objectId: t.string().primaryKey(),
+    lat: t.f64(),
+    lon: t.f64(), // -180..180
+    altKm: t.f64(), // above the WGS84 ellipsoid
+    at: t.timestamp(), // the instant this position is for
+    model: t.string(), // sgp4 | replay-circular
+    elementsEpoch: t.string(), // EPOCH of the elements used ('' for replay)
+  }
+);
+
 // Schedule tables (private). One scheduled function per table.
 const sweepTick = table(
   { public: false },
@@ -485,49 +519,45 @@ const outcomeTick = table(
   { public: false },
   { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
 );
-
-const spacetimedb = schema(
-  {
-    reentryObject,
-    sighting,
-    reporterStats,
-    computeJob,
-    corridor,
-    corridorHistory,
-    computeStatus,
-    feedStatus,
-    spaceWeather,
-    replayState,
-    forecast,
-    forecastHistory,
-    satelliteProfile,
-    archetype,
-    debrisForecast,
-    debrisComponent,
-    debrisTrack,
-    debrisHistory,
-    elementsHistory,
-    computeRun,
-    reentryOutcome,
-    forecastScore,
-    outcomeProbe,
-    replaySighting,
-    workerRegistry,
-    sweepTick,
-    replayTick,
-    noaaTick,
-    celestrakTick,
-    outcomeTick,
-  },
-  {
-    // Optional on purpose: an empty database leaves the Space-Track path disabled.
-    // Supply both at publish time from the shell, never from source.
-    env: {
-      SPACETRACK_USER: t.string().optional(),
-      SPACETRACK_PASS: t.string().optional(),
-    },
-  }
+const positionTick = table(
+  { public: false },
+  { scheduledId: t.u64().primaryKey().autoInc(), scheduledAt: t.scheduleAt() }
 );
+
+const spacetimedb = schema({
+  reentryObject,
+  sighting,
+  reporterStats,
+  computeJob,
+  corridor,
+  corridorHistory,
+  computeStatus,
+  feedStatus,
+  spaceWeather,
+  replayState,
+  forecast,
+  forecastHistory,
+  satelliteProfile,
+  archetype,
+  debrisForecast,
+  debrisComponent,
+  debrisTrack,
+  debrisHistory,
+  elementsHistory,
+  computeRun,
+  reentryOutcome,
+  forecastScore,
+  outcomeProbe,
+  replaySighting,
+  workerRegistry,
+  sweepTick,
+  replayTick,
+  noaaTick,
+  celestrakTick,
+  outcomeTick,
+  objectPosition,
+  positionTick,
+});
 export default spacetimedb;
 
 // ============================================================ helpers
@@ -537,7 +567,6 @@ type AnyCtx = {
   sender: Identity;
   timestamp: Timestamp;
   databaseIdentity: Identity;
-  env?: { SPACETRACK_USER?: string; SPACETRACK_PASS?: string };
 };
 
 const micros = (ts: Timestamp): bigint => ts.microsSinceUnixEpoch;
@@ -896,8 +925,23 @@ export const init = spacetimedb.init(ctx => {
   ctx.db.replayTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(REPLAY_TICK_EVERY) });
   ctx.db.noaaTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(NOAA_EVERY) });
   ctx.db.celestrakTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(CELESTRAK_EVERY) });
-  ctx.db.outcomeTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(OUTCOME_EVERY) });
+  ensurePositionTick(ctx);
+  ensureOutcomeTick(ctx);
 });
+
+// init only runs on a database's first publish; sweep calls these too so an
+// updated (not wiped) database starts the newer timers.
+function ensurePositionTick(ctx: AnyCtx): void {
+  if (ctx.db.positionTick.iter().next().done) {
+    ctx.db.positionTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(POSITION_TICK) });
+  }
+}
+
+function ensureOutcomeTick(ctx: AnyCtx): void {
+  if (ctx.db.outcomeTick.iter().next().done) {
+    ctx.db.outcomeTick.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(OUTCOME_EVERY) });
+  }
+}
 
 // ============================================================ roles
 
@@ -1089,8 +1133,6 @@ export const celestrakPoll = spacetimedb.procedure(
 // latest forecast issued before that time. Nothing here is invented: a missing
 // forecast is status no_forecast, and missing quantiles stay empty.
 
-const ST_DISABLED = 'disabled: SPACETRACK_USER and SPACETRACK_PASS are not set on this database';
-const ST_PARTIAL = 'disabled: Space-Track needs both SPACETRACK_USER and SPACETRACK_PASS';
 const SATCAT_NOTE =
   'CelesTrak SATCAT DECAY_DATE is a calendar date with no time of day. Stored as 00:00:00Z, so hours error is coarse to about a day. https://celestrak.org/satcat/records.php';
 
@@ -1356,14 +1398,6 @@ function feedGapOpen(ctx: AnyCtx, feed: string, gap: bigint): boolean {
   return !prev || olderThan(ctx, prev.lastAttemptAt, gap);
 }
 
-function spaceTrackCreds(ctx: AnyCtx): { user: string; pass: string } | 'disabled' | 'partial' {
-  const user = (ctx.env?.SPACETRACK_USER ?? '').trim();
-  const pass = (ctx.env?.SPACETRACK_PASS ?? '').trim();
-  if (!user && !pass) return 'disabled';
-  if (!user || !pass) return 'partial';
-  return { user, pass };
-}
-
 function hasGpElements(elementsJson: string): boolean {
   try {
     const el = JSON.parse(elementsJson);
@@ -1373,68 +1407,6 @@ function hasGpElements(elementsJson: string): boolean {
   }
 }
 
-function sessionCookie(headers: { getSetCookie?: () => string[]; get: (name: string) => string | null }): string {
-  const listed = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
-  const raws = listed.length > 0 ? listed : [headers.get('set-cookie') ?? ''].filter(s => s !== '');
-  const map = new Map<string, string>();
-  for (const raw of raws) {
-    const pair = raw.split(';')[0]?.trim() ?? '';
-    const eq = pair.indexOf('=');
-    if (eq <= 0) continue;
-    map.set(pair.slice(0, eq).toLowerCase(), pair);
-  }
-  return [...map.values()].join('; ');
-}
-
-function groupByNorad(rows: any[]): Map<number, any[]> {
-  const grouped = new Map<number, any[]>();
-  for (const row of rows) {
-    const id = Math.trunc(Number(row?.NORAD_CAT_ID));
-    if (!Number.isInteger(id) || id <= 0) continue;
-    const list = grouped.get(id) ?? [];
-    list.push(row);
-    grouped.set(id, list);
-  }
-  return grouped;
-}
-
-function isHistoricalDecay(msgType: string): boolean {
-  const t = msgType.trim().toLowerCase();
-  return t === 'satcat' || t === 'decay entry';
-}
-
-function bestHistoricalDecay(rows: any[]): any | null {
-  let best: any = null;
-  let bestPrec = Infinity;
-  for (const row of rows) {
-    if (!isHistoricalDecay(String(row?.MSG_TYPE ?? ''))) continue;
-    if (!parseUtcDateTime(String(row?.DECAY_EPOCH ?? ''))) continue;
-    const prec = Number(row?.PRECEDENCE);
-    const p = Number.isFinite(prec) ? prec : 1e9;
-    if (p < bestPrec) {
-      best = row;
-      bestPrec = p;
-    }
-  }
-  return best;
-}
-
-function bestPassedTip(rows: any[], now: bigint): any | null {
-  let best: any = null;
-  let bestMsg = -1;
-  for (const row of rows) {
-    const decay = parseUtcDateTime(String(row?.DECAY_EPOCH ?? ''));
-    if (!decay || micros(decay) > now) continue;
-    const msg = parseUtcDateTime(String(row?.MSG_EPOCH ?? row?.INSERT_EPOCH ?? ''));
-    const key = msg ? Number(micros(msg)) : 0;
-    if (!best || key >= bestMsg) {
-      best = row;
-      bestMsg = key;
-    }
-  }
-  return best;
-}
-
 function markProbe(ctx: AnyCtx, noradId: number, decayFound: boolean): void {
   const row = { noradId, checkedAt: ctx.timestamp, decayFound };
   if (ctx.db.outcomeProbe.noradId.find(noradId)) ctx.db.outcomeProbe.noradId.update(row);
@@ -1442,19 +1414,11 @@ function markProbe(ctx: AnyCtx, noradId: number, decayFound: boolean): void {
 }
 
 // SATCAT has no multi-id query (one CATNR per request). At most SATCAT_BATCH
-// archived objects per 2 h, and each id at most once a day. Space-Track is one
-// combined decay query per day and one combined TIP query per hour, and only
-// when both env values are set. Credentials are never written into feed_status.
+// archived objects per 2 h, and each id at most once a day. Space-Track is not
+// fetched here: its login stays on Steven's machine, and the feed-poller sends
+// its decay/TIP rows through report_outcome (role poller).
 function pollOutcomes(ctx: any): void {
-  const plan: {
-    creds: ReturnType<typeof spaceTrackCreds>;
-    archived: ArchivedNorad[];
-    batch: ArchivedNorad[];
-    ids: number[];
-    decayDue: boolean;
-    tipDue: boolean;
-  } = ctx.withTx((tx: AnyCtx) => {
-    const creds = spaceTrackCreds(tx);
+  const plan: { archived: ArchivedNorad[]; batch: ArchivedNorad[] } = ctx.withTx((tx: AnyCtx) => {
     const archived = archivedNorads(tx);
     const satcatDue = feedGapOpen(tx, 'celestrak_satcat', SATCAT_MIN_GAP);
     const batch = satcatDue
@@ -1465,80 +1429,29 @@ function pollOutcomes(ctx: any): void {
           })
           .slice(0, SATCAT_BATCH)
       : [];
-    const ids = archived.map(o => o.noradId).slice(0, 40);
-    return {
-      creds,
-      archived,
-      batch,
-      ids,
-      decayDue: feedGapOpen(tx, 'spacetrack_decay', SPACETRACK_DECAY_GAP),
-      tipDue: feedGapOpen(tx, 'spacetrack_tip', SPACETRACK_TIP_GAP),
-    };
+    return { archived, batch };
   });
 
   const satcatRows: { noradId: number; name: string; decay: string }[] = [];
   let satcatErr = '';
   let satcatChecked = 0;
-  if (plan.batch.length > 0) {
-    for (const item of plan.batch) {
-      try {
-        const r = ctx.http.fetch(`https://celestrak.org/satcat/records.php?CATNR=${item.noradId}&FORMAT=json`, {
-          timeout: TimeDuration.fromMillis(10000),
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const body = r.json();
-        const rec = Array.isArray(body) ? body[0] : undefined;
-        satcatChecked++;
-        satcatRows.push({
-          noradId: item.noradId,
-          name: String(rec?.OBJECT_NAME ?? item.name ?? ''),
-          decay: String(rec?.DECAY_DATE ?? '').trim(),
-        });
-      } catch (e) {
-        satcatErr = String(e).slice(0, 200);
-        break;
-      }
-    }
-  }
-
-  let decayRows: any[] = [];
-  let tipRows: any[] = [];
-  let decayErr = '';
-  let tipErr = '';
-  const creds = plan.creds;
-  const authed = typeof creds === 'object';
-  const wantDecay = authed && plan.decayDue && plan.ids.length > 0;
-  const wantTip = authed && plan.tipDue && plan.ids.length > 0;
-  if (typeof creds === 'object' && (wantDecay || wantTip)) {
+  for (const item of plan.batch) {
     try {
-      const login = ctx.http.fetch('https://www.space-track.org/ajaxauth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `identity=${encodeURIComponent(creds.user)}&password=${encodeURIComponent(creds.pass)}`,
+      const r = ctx.http.fetch(`https://celestrak.org/satcat/records.php?CATNR=${item.noradId}&FORMAT=json`, {
         timeout: TimeDuration.fromMillis(10000),
       });
-      if (!login.ok) throw new Error(`login HTTP ${login.status}`);
-      const cookie = sessionCookie(login.headers);
-      if (!cookie) throw new Error('login returned no session cookie');
-      const idList = plan.ids.join(',');
-      const get = (path: string) => {
-        const r = ctx.http.fetch(`https://www.space-track.org${path}`, {
-          headers: { Cookie: cookie, Accept: 'application/json' },
-          timeout: TimeDuration.fromMillis(15000),
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const body = r.json();
-        if (!Array.isArray(body)) throw new Error('unexpected JSON');
-        return body;
-      };
-      if (wantDecay) decayRows = get(`/basicspacedata/query/class/decay/NORAD_CAT_ID/${idList}/format/json`);
-      if (wantTip) tipRows = get(`/basicspacedata/query/class/tip/NORAD_CAT_ID/${idList}/format/json`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const body = r.json();
+      const rec = Array.isArray(body) ? body[0] : undefined;
+      satcatChecked++;
+      satcatRows.push({
+        noradId: item.noradId,
+        name: String(rec?.OBJECT_NAME ?? item.name ?? ''),
+        decay: String(rec?.DECAY_DATE ?? '').trim(),
+      });
     } catch (e) {
-      const msg = String(e).replace(/identity=|password=/gi, '').slice(0, 200);
-      if (wantDecay) decayErr = msg;
-      if (wantTip) tipErr = msg;
-      decayRows = [];
-      tipRows = [];
+      satcatErr = String(e).slice(0, 200);
+      break;
     }
   }
 
@@ -1569,64 +1482,6 @@ function pollOutcomes(ctx: any): void {
     } else if (plan.archived.length === 0) {
       console.log('celestrak_satcat: no archived objects to check');
     }
-
-    if (creds === 'disabled' || creds === 'partial') {
-      const why = creds === 'partial' ? ST_PARTIAL : ST_DISABLED;
-      recordFeed(tx, 'spacetrack_decay', false, why, 0);
-      recordFeed(tx, 'spacetrack_tip', false, why, 0);
-      return;
-    }
-    if (wantDecay) {
-      let n = 0;
-      if (decayErr === '') {
-        for (const [noradId, rows] of groupByNorad(decayRows)) {
-          const chosen = bestHistoricalDecay(rows);
-          const decayAt = chosen ? parseUtcDateTime(String(chosen.DECAY_EPOCH ?? '')) : undefined;
-          if (!chosen || !decayAt) continue;
-          const known = byNorad.get(noradId);
-          if (
-            autoOutcome(tx, {
-              noradId,
-              objectId: known?.objectId ?? '',
-              name: String(chosen.OBJECT_NAME ?? known?.name ?? ''),
-              decayAt,
-              source: 'SPACETRACK_DECAY',
-              note: `Space-Track decay class, MSG_TYPE ${String(chosen.MSG_TYPE ?? '')}. Historical decay epoch, not a TIP prediction.`,
-            })
-          ) {
-            n++;
-          }
-        }
-      }
-      recordFeed(tx, 'spacetrack_decay', decayErr === '', decayErr, n);
-    }
-    if (wantTip) {
-      let n = 0;
-      if (tipErr === '') {
-        const now = micros(tx.timestamp);
-        for (const [noradId, rows] of groupByNorad(tipRows)) {
-          const chosen = bestPassedTip(rows, now);
-          const decayAt = chosen ? parseUtcDateTime(String(chosen.DECAY_EPOCH ?? '')) : undefined;
-          if (!chosen || !decayAt) continue;
-          const known = byNorad.get(noradId);
-          const windowMin = Number(chosen.WINDOW);
-          const windowNote = Number.isFinite(windowMin) ? ` TIP window ±${windowMin} min.` : '';
-          if (
-            autoOutcome(tx, {
-              noradId,
-              objectId: known?.objectId ?? '',
-              name: String(chosen.OBJECT_NAME ?? known?.name ?? ''),
-              decayAt,
-              source: 'SPACETRACK_TIP',
-              note: `Space-Track TIP DECAY_EPOCH is the predicted time at 10 km altitude, not a surveyed impact or a SATCAT decay date. Used only when no historical decay is on file.${windowNote}`,
-            })
-          ) {
-            n++;
-          }
-        }
-      }
-      recordFeed(tx, 'spacetrack_tip', tipErr === '', tipErr, n);
-    }
   });
 }
 
@@ -1653,6 +1508,20 @@ export const pollFeedsNow = spacetimedb.procedure(t.unit(), ctx => {
   pollOutcomes(ctx);
   return {};
 });
+
+// Feed-poller entry for Space-Track decay/TIP rows (the poller holds the login,
+// in Steven's .env; the module never sees it). Respects source rank, so a TIP
+// prediction never replaces a historical decay or an operator correction.
+export const reportOutcome = spacetimedb.reducer(
+  { noradId: t.u32(), name: t.string(), decayAt: t.timestamp(), source: t.string(), note: t.string() },
+  (ctx, a) => {
+    requireRole(ctx, 'poller', 'operator');
+    if (a.noradId <= 0) throw new SenderError('norad_id required');
+    if (a.source !== 'SPACETRACK_DECAY' && a.source !== 'SPACETRACK_TIP') throw new SenderError('bad source');
+    const known = archivedNorads(ctx).find(o => o.noradId === a.noradId);
+    autoOutcome(ctx, { noradId: a.noradId, objectId: known?.objectId ?? '', name: a.name, decayAt: a.decayAt, source: a.source, note: a.note });
+  }
+);
 
 // Operator correction. Replaces the outcome for this NORAD id and scores it again.
 export const upsertOutcome = spacetimedb.reducer(
@@ -2040,6 +1909,13 @@ export const archiveCurrentElements = spacetimedb.reducer({}, ctx => {
   }
 });
 
+// Hazard grid as stored: '' when missing or implausibly large (the model keeps <= 5000 cells, ~100 kB).
+function gridJson(g: any): string {
+  if (!g || !Array.isArray(g.cells)) return '';
+  const s = JSON.stringify(g);
+  return s.length <= 400_000 ? s : '';
+}
+
 // result: JSON from gx10-compute /debris (docs/DEBRIS_MODEL.md §5).
 export const publishDebris = spacetimedb.reducer(
   { jobId: t.u64(), result: t.string(), jobMs: t.u32(), particleSteps: t.u64(), device: t.string() },
@@ -2078,6 +1954,11 @@ export const publishDebris = spacetimedb.reducer(
       device: a.device,
       computedAt: ctx.timestamp,
       note: String(r.note ?? '').slice(0, 200),
+      pHazard: num(r.hazard?.p_any, -1),
+      hazardPiecesMean: num(r.hazard?.pieces_mean, -1),
+      hazardPiecesP95: num(r.hazard?.pieces_p95, -1),
+      survivingMassFrac: num(r.surviving_mass_frac, -1),
+      hazardGrid: gridJson(r.hazard_grid),
     };
     if (prev) ctx.db.debrisForecast.objectId.update(row);
     else ctx.db.debrisForecast.insert(row);
@@ -2102,6 +1983,7 @@ export const publishDebris = spacetimedb.reducer(
         impactLat: opt(c.impact?.lat),
         impactLon: opt(c.impact?.lon),
         footprint: JSON.stringify(c.footprint?.bands ?? []),
+        pHazard: num(c.p_hazard, -1),
       });
     }
     for (const tr of (r.sample_tracks ?? []).slice(0, 80)) {
@@ -2123,6 +2005,8 @@ export const publishDebris = spacetimedb.reducer(
       areaKm2_90: row.areaKm2_90,
       tier,
       computedAt: ctx.timestamp,
+      pHazard: row.pHazard,
+      hazardPiecesMean: row.hazardPiecesMean,
     });
     ctx.db.computeRun.insert({
       id: 0n,
@@ -2243,6 +2127,8 @@ export const reportComputeStatus = spacetimedb.reducer(
 // Every 2 s: expire job leases and mark silent workers unhealthy.
 export const sweep = spacetimedb.reducer({ onSchedule: sweepTick }, { tick: sweepTick.rowType }, ctx => {
   requireScheduler(ctx);
+  ensurePositionTick(ctx);
+  ensureOutcomeTick(ctx);
   const unhealthy = new Set<string>(); // fast lane: down after HEARTBEAT_STALE
   const gone = new Set<string>(); // bulk lane: reported unhealthy, or silent for HEARTBEAT_STALE_BULK
   for (const w of ctx.db.computeStatus.iter()) {
@@ -2398,3 +2284,85 @@ export const mySightings = spacetimedb.view(
   t.array(sighting.rowType),
   ctx => [...ctx.db.sighting.reporter.filter(ctx.sender)]
 );
+
+// ============================================================ positions
+
+const EARTH_ROT_DEG_S = 360 / 86164.0905;
+const MU_KM3_S2 = 398600.4418;
+const EARTH_R_KM = 6378.137;
+const wrapLon = (lon: number): number => ((((lon + 180) % 360) + 360) % 360) - 180;
+
+// Parsed SGP4 records, reused while an object's elements are unchanged.
+const satrecs = new Map<string, { elements: string; rec: SatRec | null }>();
+
+type Fix = { lat: number; lon: number; altKm: number; model: string; epoch: string };
+
+function positionOf(o: { id: string; source: string; elements: string }, when: Date): Fix | null {
+  let el: any;
+  try {
+    el = JSON.parse(o.elements);
+  } catch {
+    return null;
+  }
+  if (o.source === 'REPLAY' || el?.model) {
+    // Same circular model as web/src/orbit.ts stubGroundPoint and the compute stub.
+    const inc = ((el.inclination_deg ?? 51.6) * Math.PI) / 180;
+    const periodS = (el.period_min ?? 88) * 60;
+    const dt = when.getTime() / 1000 - (el.epoch ? Date.parse(el.epoch) / 1000 : 0);
+    const u = ((el.arg_lat_deg ?? 0) * Math.PI) / 180 + (2 * Math.PI * dt) / periodS;
+    const lat = (Math.asin(Math.sin(inc) * Math.sin(u)) * 180) / Math.PI;
+    const lon = wrapLon((el.raan_deg ?? 0) + (Math.atan2(Math.cos(inc) * Math.sin(u), Math.cos(u)) * 180) / Math.PI - EARTH_ROT_DEG_S * dt);
+    const altKm = Math.cbrt((MU_KM3_S2 * periodS * periodS) / (4 * Math.PI * Math.PI)) - EARTH_R_KM;
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon, altKm, model: 'replay-circular', epoch: '' } : null;
+  }
+  let cached = satrecs.get(o.id);
+  if (!cached || cached.elements !== o.elements) {
+    let rec: SatRec | null = null;
+    try {
+      rec = json2satrec(el);
+    } catch {
+      rec = null;
+    }
+    cached = { elements: o.elements, rec };
+    satrecs.set(o.id, cached);
+  }
+  if (!cached.rec) return null;
+  const pv = propagate(cached.rec, when);
+  if (!pv || typeof pv.position === 'boolean' || !pv.position) return null;
+  const geo = eciToGeodetic(pv.position, gstime(when));
+  const lat = degreesLat(geo.latitude);
+  const lon = degreesLong(geo.longitude);
+  // Below ~80 km SGP4 is meaningless (the object has re-entered).
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !(geo.height > 80)) return null;
+  return { lat, lon, altKm: geo.height, model: 'sgp4', epoch: String(el.EPOCH ?? '') };
+}
+
+export const updatePositions = spacetimedb.reducer({ onSchedule: positionTick }, { tick: positionTick.rowType }, ctx => {
+  requireScheduler(ctx);
+  const now = micros(ctx.timestamp);
+  const when = new Date(Number(now / 1000n));
+  for (const o of [...ctx.db.reentryObject.iter()]) {
+    const prev = ctx.db.objectPosition.objectId.find(o.id);
+    if (o.status === 'DECAYED') {
+      if (prev) ctx.db.objectPosition.objectId.delete(o.id);
+      continue;
+    }
+    const t50 = ctx.db.forecast.objectId.find(o.id)?.tQ50;
+    const near = t50 !== undefined && micros(t50) - now < POSITION_NEAR;
+    // Small slack so a 60 s period is not pushed to 65 s by the 5 s tick.
+    const every = (near ? POSITION_EVERY_NEAR : POSITION_EVERY) - SEC;
+    if (prev && !olderThan(ctx, prev.at, every)) continue;
+    const fix = positionOf(o, when);
+    if (!fix) {
+      if (prev) ctx.db.objectPosition.objectId.delete(o.id);
+      continue;
+    }
+    const row = { objectId: o.id, lat: fix.lat, lon: fix.lon, altKm: fix.altKm, at: ctx.timestamp, model: fix.model, elementsEpoch: fix.epoch };
+    if (prev) ctx.db.objectPosition.objectId.update(row);
+    else ctx.db.objectPosition.insert(row);
+  }
+  // Positions of objects that are no longer tracked.
+  for (const p of [...ctx.db.objectPosition.iter()]) {
+    if (!ctx.db.reentryObject.id.find(p.objectId)) ctx.db.objectPosition.objectId.delete(p.objectId);
+  }
+});

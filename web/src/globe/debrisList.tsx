@@ -3,10 +3,16 @@
 import type { Viewer } from 'cesium';
 import { useTable } from 'spacetimedb/react';
 import { tables } from '../module_bindings/index.ts';
-import type { ReentryLookup, TrackedObject } from './satellites.ts';
+import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
 import { reentryCss, relTime, useClockNow } from './legend.tsx';
 import { followObject } from './selectionLayer.tsx';
 import { setSelected, useSelected } from './selection.ts';
+import { sgp4Point } from '../orbit.ts';
+
+function altKm(obj: TrackedObject, nowMs: number): string {
+  const p = sgp4Point(satKey(obj), obj.elements, new Date(nowMs));
+  return p ? `${Math.round(p.altKm)} km` : '— km';
+}
 
 export function DebrisList({ viewer, objects, reentry }: { viewer: Viewer | null; objects: TrackedObject[]; reentry: ReentryLookup }) {
   const [forecasts] = useTable(tables.debrisForecast);
@@ -30,7 +36,8 @@ export function DebrisList({ viewer, objects, reentry }: { viewer: Viewer | null
       {rows.map(({ f, obj, t50 }) => (
         <button key={obj.id} className={obj.id === selected ? 'sel' : ''} onClick={() => pick(obj)}>
           <span className="dot" style={{ background: reentryCss(t50, nowMs) }} />
-          {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {Math.round(f.pAnySurvives * 100)}% survives · ~{Math.round(f.survivingMassKgMean)} kg</span>
+          {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {altKm(obj, nowMs)} · {Math.round(f.pAnySurvives * 100)}% survives · ~{Math.round(f.survivingMassKgMean)} kg</span>
+          {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {f.pHazard >= 0 ? `~${f.hazardPiecesMean >= 2 ? Math.round(f.hazardPiecesMean) : f.hazardPiecesMean.toFixed(1)} dangerous` : `${Math.round(f.pAnySurvives * 100)}% any piece`} · ~{Math.round(f.survivingMassKgMean)} kg</span>
         </button>
       ))}
     </div>

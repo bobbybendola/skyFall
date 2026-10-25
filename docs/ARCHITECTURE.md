@@ -60,7 +60,7 @@ Rules:
                                                       └────────────────────────┘
 ```
 
-Outcome validation uses the same shape: `outcome_poll` reads CelesTrak SATCAT (no login) for NORAD ids already in `elements_history`, and Space-Track decay/TIP only when `SPACETRACK_USER` and `SPACETRACK_PASS` are set on the database. It writes `reentry_outcome`. Scoring appends `forecast_score`. The live FORECAST batch skips `source = REPLAY`. A historical case is a separate FORECAST job whose `as_of` is passed to `/forecast`.
+Outcome validation uses the same shape: `outcome_poll` reads CelesTrak SATCAT (no login) for NORAD ids already in `elements_history`, Space-Track decay/TIP rows come from the feed-poller (`services/feed-poller`, planned) on Steven's machine, which reads the login from his `.env` and sends rows through `report_outcome` (role `poller`). The module never holds Space-Track credentials. It writes `reentry_outcome`. Scoring appends `forecast_score`. The live FORECAST batch skips `source = REPLAY`. A historical case is a separate FORECAST job whose `as_of` is passed to `/forecast`.
 
 ## Tables
 Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_case names below. Field lists are the contract: add fields only by editing this file too.
@@ -83,6 +83,7 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `debris_forecast` | `object_id` | `version`, `archetype_id`, `forecast_version` (which forecast it used), `n_particles`, `p_any_survives`, `surviving_mass_kg_mean`, `surviving_mass_kg_p95`, `casualty_area_m2_mean`, `footprint` (JSON bands 50/90), `area_km2_90`, `impact_t_q05?`, `impact_t_q50?`, `impact_t_q95?`, `tier`, `device`, `computed_at`, `note` |
 | `debris_component` | `id` (auto) | `object_id` (index), `version`, `name`, `material`, `shape`, `count`, `mass_kg_start`, `p_survive`, `mass_kg_mean`, `impact_speed_ms_mean`, `impact_energy_j_mean`, `demise_alt_km_mean?`, `footprint` (JSON bands). Rows for the previous version are deleted on publish |
 | `debris_track` | `id` (auto) | `object_id` (index), `version`, `component`, `survived` (bool), `points` (JSON `[[t_unix, lat, lon, alt_km], ...]`, ≤ 60 points). A few representative trajectories per component for the 3D animation |
+| `object_position` | `object_id` | `lat`, `lon`, `alt_km`, `at`, `model` (`sgp4` \| `replay-circular`), `elements_epoch`. Current sub-satellite point, recomputed by the module from the stored elements (satellite.js 6.0.2 SGP4): every 60 s, every 5 s within 1 h of the forecast re-entry. Row removed once the object decays or SGP4 gives no position |
 | `debris_history` | `id` (auto) | `object_id`, `version`, `p_any_survives`, `surviving_mass_kg_mean`, `area_km2_90`, `tier`, `computed_at` |
 | `reentry_outcome` | `norad_id` | `object_id`, `name`, `decay_at` (official decay time), `source` (`CELESTRAK_SATCAT` \| `SPACETRACK_DECAY` \| `SPACETRACK_TIP` \| `OPERATOR`), `finds` (JSON `[{lat, lon, note}]`, reported find points; may be `[]`), `note`, `replay` (true for a historical case; that row is not a live prediction), `updated_at` |
 | `forecast_score` | `id` (auto) | `norad_id` (index), `object_id`, `forecast_history_id?`, `status` (`scored` \| `no_forecast`), `hours_error?`, `inside_window?`, `find_hits` (JSON `[{lat, lon, note, inside}]`), `lead_time_hours?`, `calibrated`, `replay`, `source`, `forecast_computed_at?`, `scored_at`. Public and subscribable. A new row is appended on each score; the latest per `norad_id` is current |
@@ -97,7 +98,7 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `assistant_message` (planned, private; read through the view) | `id` (auto) | `asker` (identity), `role` (`USER` \| `ASSISTANT`), `text`, `lat?`, `lon?` (where the user is, if they shared it), `data_mode` (`LIVE` \| `SIM` \| `MIXED` \| `NONE`), `tools_used` (JSON list of lookups called), `job_id?`, `created_at` |
 | `sweep_tick`, `replay_tick`, `noaa_tick`, `celestrak_tick`, `outcome_tick` (private) | `scheduled_id` | `scheduled_at`: schedule rows inserted by `init` |
 
-Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `celestrak_satcat` (module: decay dates for NORAD ids in `elements_history`), `celestrak_debris_groups` (planned, module), `spacetrack_tip`, `spacetrack_decay` (module, only when both database env vars are set; otherwise `last_error` starts with `disabled:`), `spacetrack_gp`, `gcat_satcat`, `discosweb` (planned, poller).
+Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `celestrak_satcat` (module: decay dates for NORAD ids in `elements_history`), `celestrak_debris_groups` (planned, module), `spacetrack_tip`, `spacetrack_decay` (feed-poller, planned), `spacetrack_gp`, `gcat_satcat`, `discosweb` (planned, poller).
 
 ### `forecast_score` fields
 
@@ -119,7 +120,7 @@ Feeds will not overwrite a higher-ranked source. Rank, highest last: `SPACETRACK
 
 CelesTrak SATCAT `DECAY_DATE` is a calendar date. It is stored as `00:00:00Z`. Hours error against that row is coarse to about a day. The note on the outcome says so.
 
-SATCAT's documented `CATNR` query is one catalog number per request. The procedure checks at most 4 archived ids per 2 hours, and does not repeat an id for 24 hours. Space-Track, when enabled, sends one combined decay query per day and one combined TIP query per hour (comma-separated NORAD ids, capped at 40), never one request per object. Both env values have to be present. They are optional module environment variables (`SPACETRACK_USER`, `SPACETRACK_PASS`), supplied at publish time from the shell. They are not in source. If either is missing, both Space-Track feeds are recorded as disabled and no login is attempted.
+SATCAT's documented `CATNR` query is one catalog number per request. The procedure checks at most 4 archived ids per 2 hours, and does not repeat an id for 24 hours. Space-Track is not called by the module. The planned feed-poller should send one combined decay query per day and one combined TIP query per hour (comma-separated NORAD ids, capped at 40), never one request per object, and report each row through `report_outcome`.
 
 ## Reducers, procedures, views
 | Name | Kind | Who | Effect |
@@ -142,11 +143,12 @@ SATCAT's documented `CATNR` query is one catalog number per request. The procedu
 | `load_replay_script(event_id, rows)` | reducer | operator | load the simulated sightings from `tools/sighting-gen` |
 | `start_replay(event_id, t_offset, speed)`, `pause_replay()` | reducer | operator | drive the replay clock |
 | `replay_step` | scheduled reducer, 1 s | module | emit due `replay_sighting` rows as `SIM` sightings |
+| `update_positions` | scheduled reducer, 5 s | module | refresh `object_position` rows that are due (60 s, or 5 s near re-entry); bootstrapped by `sweep` on an existing database |
 | `reset_demo(object_id)` | reducer | operator | delete DEMO/SIM sightings, their jobs, stats and history; rewind the script; queue a baseline corridor |
 | `noaa_poll` | scheduled procedure, 15 min | module | fetch Kp + F10.7 over HTTP, write `space_weather` + `feed_status` |
 | `celestrak_poll` | scheduled procedure, 2 h | module | fetch `SPECIAL=DECAYING` (skips if attempted < 2 h ago, never retries in a loop), upsert `CANDIDATE` objects |
 | `poll_feeds_now` | procedure | operator | run NOAA, CelesTrak decaying, and the outcome fetch now (CelesTrak gaps still apply) |
-| `outcome_poll` | scheduled procedure, 6 h | module | for NORAD ids in `elements_history`, fetch CelesTrak SATCAT decay dates; Space-Track decay and TIP only if credentials are configured |
+| `outcome_poll` | scheduled procedure, 6 h | module | for NORAD ids in `elements_history`, fetch CelesTrak SATCAT decay dates; Space-Track rows come from the feed-poller via `report_outcome` |
 | `upsert_outcome(norad_id, object_id, name, decay_at, source, finds, note, replay)` | reducer | operator | insert or correct one `reentry_outcome`, then score it |
 | `load_replay_case(json)` | reducer | operator | load one historical case (`replay` forced true). With a GP element set, queue one FORECAST for that object with `as_of`. Without elements, store the outcome only |
 | `my_sightings` | view | anyone | the caller's own sightings (parked) |
@@ -164,7 +166,7 @@ SATCAT's documented `CATNR` query is one catalog number per request. The procedu
 Scheduled reducers and procedures check `ctx.sender == ctx.databaseIdentity`, so clients cannot trigger them directly.
 
 **Verified on maincloud (Oct 24, CLI 2.13):** the module publishes as `skyfall-calhacks`; procedures fetch NOAA and CelesTrak over HTTP and write in the same call; interval schedules fire about one interval after publish (so `poll` once after a fresh publish); a client reducer that throws `SenderError` rejects the caller's promise; a second worker holding the same identity is refused by `claim_job`'s lease check. Measured: sighting → new corridor on the big screen in 0.39 s (stub compute); GPU worker killed → CPU worker finished the next job 7 s later. NOAA's `10cm-flux.json` is a one-element array, not an object.
-**Verified 2026-10-25 on a local `spacetime start`:** procedure HTTP works there. `poll_feeds_now` wrote NOAA (Kp and F10.7), CelesTrak `SPECIAL=DECAYING` (69 objects), and four CelesTrak SATCAT lookups. Space-Track was left disabled because the database had no credentials. This was a throwaway local database, not maincloud.
+**Verified 2026-10-25 on a local `spacetime start`:** procedure HTTP works there. `poll_feeds_now` wrote NOAA (Kp and F10.7), CelesTrak `SPECIAL=DECAYING` (69 objects), and four CelesTrak SATCAT lookups. Space-Track was not involved (the module no longer calls it). This was a throwaway local database, not maincloud.
 
 ## One debris prediction, end to end (planned)
 1. `celestrak_poll` brings new elements → `elements_history` + a FORECAST job.

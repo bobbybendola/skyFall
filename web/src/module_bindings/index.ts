@@ -50,6 +50,7 @@ import RegisterWorkerReducer from "./register_worker_reducer";
 import RematchProfilesReducer from "./rematch_profiles_reducer";
 import ReportComputeStatusReducer from "./report_compute_status_reducer";
 import ReportFeedStatusReducer from "./report_feed_status_reducer";
+import ReportOutcomeReducer from "./report_outcome_reducer";
 import RequestDebrisReducer from "./request_debris_reducer";
 import RequestForecastReducer from "./request_forecast_reducer";
 import ResetDemoReducer from "./reset_demo_reducer";
@@ -80,6 +81,7 @@ import ForecastRow from "./forecast_table";
 import ForecastHistoryRow from "./forecast_history_table";
 import ForecastScoreRow from "./forecast_score_table";
 import MySightingsRow from "./my_sightings_table";
+import ObjectPositionRow from "./object_position_table";
 import ReentryObjectRow from "./reentry_object_table";
 import ReentryOutcomeRow from "./reentry_outcome_table";
 import ReplayStateRow from "./replay_state_table";
@@ -281,6 +283,17 @@ const tablesSchema = __schema({
       { name: 'forecast_score_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ForecastScoreRow),
+  objectPosition: __table({
+    name: 'object_position',
+    indexes: [
+      { accessor: 'objectId', name: 'object_position_object_id_idx_btree', algorithm: 'btree', columns: [
+        'objectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'object_position_object_id_key', constraint: 'unique', columns: ['objectId'] },
+    ],
+  }, ObjectPositionRow),
   reentryObject: __table({
     name: 'reentry_object',
     indexes: [
@@ -391,6 +404,7 @@ const reducersSchema = __reducers(
   __reducerSchema("rematch_profiles", RematchProfilesReducer),
   __reducerSchema("report_compute_status", ReportComputeStatusReducer),
   __reducerSchema("report_feed_status", ReportFeedStatusReducer),
+  __reducerSchema("report_outcome", ReportOutcomeReducer),
   __reducerSchema("request_debris", RequestDebrisReducer),
   __reducerSchema("request_forecast", RequestForecastReducer),
   __reducerSchema("reset_demo", ResetDemoReducer),

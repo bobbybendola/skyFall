@@ -8,6 +8,7 @@ import { useSelectedDebris } from './globe/debris.ts';
 import { DebrisList } from './globe/debrisList.tsx';
 import { useDebrisLines } from './globe/debrisLines.ts';
 import { Legend } from './globe/legend.tsx';
+import { SatModelPanel } from './globe/SatModelPanel.tsx';
 
 function Layers() {
   const viewer = useViewer();
@@ -24,6 +25,7 @@ function Layers() {
       <Legend />
       <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
       <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />
+      <SatModelPanel objects={objects} debris={debris} />
     </>
   );
 }

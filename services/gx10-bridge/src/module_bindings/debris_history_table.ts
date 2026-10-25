@@ -19,4 +19,6 @@ export default __t.row({
   areaKm290: __t.f64().name("area_km_2_90"),
   tier: __t.string(),
   computedAt: __t.timestamp().name("computed_at"),
+  pHazard: __t.f64().name("p_hazard"),
+  hazardPiecesMean: __t.f64().name("hazard_pieces_mean"),
 });

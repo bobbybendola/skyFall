@@ -39,7 +39,7 @@ Repo: https://github.com/bobbybendola/skyFall (private for now).
 | Web | 2D prototype (MapLibre) with live forecasts. **To be replaced by the 3D globe** |
 | Crowd sightings, replay, corridor | Parked (code stays, not in the demo) |
 | Archive | Element sets and forecasts archived since ~11:00 PT, for validating a real re-entry this weekend |
-| Forecast validation | `reentry_outcome` + `forecast_score` in the module. CelesTrak SATCAT decay dates for archived NORAD ids. Space-Track decay/TIP only if `SPACETRACK_USER` and `SPACETRACK_PASS` are set on the database; otherwise those feeds are disabled. Historical cases in `data/replay/historical-cases.json` (decay dates only; no element sets). Scores with `replay=true` are not live predictions |
+| Forecast validation | `reentry_outcome` + `forecast_score` in the module. CelesTrak SATCAT decay dates for archived NORAD ids. Space-Track decay/TIP from the feed-poller (planned) via `report_outcome`; the module never holds the login |
 
 ---
 

@@ -19,9 +19,9 @@ import {
   VerticalOrigin,
   type Viewer,
 } from 'cesium';
-import { sgp4Point } from '../orbit.ts';
+import { altitudeInfo, altitudeText, sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
-import type { DebrisResult } from './debrisTypes.ts';
+import { dangerText, type DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
 import { localTime, reentryCss, relTime, useClockNow } from './legend.tsx';
 import { resetClock } from './cesium-setup.ts';
@@ -171,12 +171,23 @@ export function SelectedCard({
     followObject(viewer, obj.id);
   };
   const atNow = Math.abs(nowMs - Date.now()) < 60_000;
+  const alt = altitudeInfo(satKey(obj), obj.elements, nowMs);
   return (
     <div className="globe-info">
       <b>{obj.name}</b> <span className="muted">NORAD {obj.noradId}</span>
       <div className="muted">
         real orbit data ({obj.source === 'CANDIDATE' ? 'CelesTrak' : obj.source}) · elements {String(el.EPOCH ?? '').slice(0, 16)}Z
       </div>
+      {alt ? (
+        <div>
+          Altitude <b>{altitudeText(alt)}</b>
+          {alt.perigeeKm !== null && alt.apogeeKm !== null && (
+            <span className="muted"> · perigee {Math.round(alt.perigeeKm)} / apogee {Math.round(alt.apogeeKm)} km</span>
+          )}
+        </div>
+      ) : (
+        <div className="muted">altitude unavailable (orbit data no longer valid at this time)</div>
+      )}
       {r ? (
         <>
           <div>
@@ -191,7 +202,7 @@ export function SelectedCard({
       )}
       {debris && (
         <div>
-          {debris.source === 'mock' ? <span className="mock">MOCK</span> : <span className="muted">modeled estimate ({debris.archetype}) ·</span>} debris: {Math.round(debris.p_any_survives * 100)}% chance any piece survives ·{' '}
+          {debris.source === 'mock' ? <span className="mock">MOCK</span> : <span className="muted">modeled estimate ({debris.archetype}) ·</span>} debris: {dangerText(debris)} ·{' '}
           {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
         </div>
       )}

@@ -110,6 +110,7 @@ export const DebrisComponent = __t.object("DebrisComponent", {
   impactLat: __t.option(__t.f64()),
   impactLon: __t.option(__t.f64()),
   footprint: __t.string(),
+  pHazard: __t.f64(),
 });
 export type DebrisComponent = __Infer<typeof DebrisComponent>;
 
@@ -130,6 +131,11 @@ export const DebrisForecast = __t.object("DebrisForecast", {
   device: __t.string(),
   computedAt: __t.timestamp(),
   note: __t.string(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
+  hazardPiecesP95: __t.f64(),
+  survivingMassFrac: __t.f64(),
+  hazardGrid: __t.string(),
 });
 export type DebrisForecast = __Infer<typeof DebrisForecast>;
 
@@ -142,6 +148,8 @@ export const DebrisHistory = __t.object("DebrisHistory", {
   areaKm290: __t.f64(),
   tier: __t.string(),
   computedAt: __t.timestamp(),
+  pHazard: __t.f64(),
+  hazardPiecesMean: __t.f64(),
 });
 export type DebrisHistory = __Infer<typeof DebrisHistory>;
 
@@ -237,6 +245,17 @@ export const NoaaTick = __t.object("NoaaTick", {
 });
 export type NoaaTick = __Infer<typeof NoaaTick>;
 
+export const ObjectPosition = __t.object("ObjectPosition", {
+  objectId: __t.string(),
+  lat: __t.f64(),
+  lon: __t.f64(),
+  altKm: __t.f64(),
+  at: __t.timestamp(),
+  model: __t.string(),
+  elementsEpoch: __t.string(),
+});
+export type ObjectPosition = __Infer<typeof ObjectPosition>;
+
 export const OutcomeProbe = __t.object("OutcomeProbe", {
   noradId: __t.u32(),
   checkedAt: __t.timestamp(),
@@ -249,6 +268,12 @@ export const OutcomeTick = __t.object("OutcomeTick", {
   scheduledAt: __t.scheduleAt(),
 });
 export type OutcomeTick = __Infer<typeof OutcomeTick>;
+
+export const PositionTick = __t.object("PositionTick", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type PositionTick = __Infer<typeof PositionTick>;
 
 export const ReentryObject = __t.object("ReentryObject", {
   id: __t.string(),

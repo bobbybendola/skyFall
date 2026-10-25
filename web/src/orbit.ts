@@ -78,3 +78,57 @@ export function sgp4Point(key: string, elementsJson: string, when: Date): { lon:
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   return { lon, lat, altKm: geo.height };
 }
+
+export type AltitudeInfo = {
+  altKm: number; // geodetic altitude now
+  perigeeKm: number | null; // from the element set (mean elements, spherical Earth)
+  apogeeKm: number | null;
+  dropKmPerDay: number | null; // orbit-average altitude now vs 1 day later, from SGP4
+};
+
+const R_EARTH_KM = 6378.137;
+const MU_KM3_S2 = 398600.4418;
+
+function orbitMeanAlt(key: string, elementsJson: string, tMs: number, periodS: number): number | null {
+  let sum = 0;
+  const n = 12;
+  for (let i = 0; i < n; i++) {
+    const p = sgp4Point(key, elementsJson, new Date(tMs + (periodS * 1000 * i) / n));
+    if (!p) return null;
+    sum += p.altKm;
+  }
+  return sum / n;
+}
+
+// Altitude of a real object at a time, plus perigee/apogee and how fast it is coming down.
+export function altitudeInfo(key: string, elementsJson: string, tMs: number): AltitudeInfo | null {
+  const now = sgp4Point(key, elementsJson, new Date(tMs));
+  if (!now) return null;
+  let perigeeKm: number | null = null;
+  let apogeeKm: number | null = null;
+  let periodS = 5400;
+  try {
+    const el = JSON.parse(elementsJson);
+    const nRad = (Number(el.MEAN_MOTION) * 2 * Math.PI) / 86400; // rev/day -> rad/s
+    const e = Number(el.ECCENTRICITY);
+    if (nRad > 0 && Number.isFinite(e)) {
+      const a = Math.cbrt(MU_KM3_S2 / (nRad * nRad));
+      perigeeKm = a * (1 - e) - R_EARTH_KM;
+      apogeeKm = a * (1 + e) - R_EARTH_KM;
+      periodS = (2 * Math.PI) / nRad;
+    }
+  } catch {
+    /* no elements: altitude only */
+  }
+  const m0 = orbitMeanAlt(key, elementsJson, tMs, periodS);
+  const m1 = orbitMeanAlt(key, elementsJson, tMs + 86_400_000, periodS);
+  const dropKmPerDay = m0 !== null && m1 !== null ? m0 - m1 : null;
+  return { altKm: now.altKm, perigeeKm, apogeeKm, dropKmPerDay };
+}
+
+// "312 km" style label; under 1 km/day shows one decimal.
+export function altitudeText(a: AltitudeInfo): string {
+  const drop = a.dropKmPerDay;
+  const rate = drop === null ? '' : drop > 0.05 ? ` · dropping ~${drop >= 1 ? Math.round(drop) : drop.toFixed(1)} km/day` : ' · holding altitude';
+  return `${Math.round(a.altKm)} km${rate}`;
+}
