@@ -41,15 +41,22 @@ Branch each of G2–G4 from `feat/globe-3d` once G1 is merged to main (or from t
 - Clock: `viewer.clock` (real time; the timeline spans now − 1 h → now + 4 days).
 - Material colors: `MATERIAL_COLOR` in `debrisTypes.ts`.
 
-## G2: lines to landing points + impact zones (teammate 2)
-- [ ] For the selected satellite: a **line from the satellite to each predicted landing point**, one per component (or per sampled impact).
+## G2: lines to landing points + impact zones (teammate 2; done in PR from `feat/globe-debris-lines`)
+- [x] For the selected satellite: a **line from the satellite to each predicted landing point**, one per component (or per sampled impact).
   - Color by material: steel = blue-grey, titanium = white, aluminium = orange, CFRP = black, other = purple.
   - Opacity and width by `p_survive`. Lines follow the satellite as it moves.
-- [ ] Impact zones on the surface: each component's 50/90% footprint polygons (`debris_component.footprint`), plus the combined footprint (`debris_forecast.footprint`). Clamped to the ground; translucent fill + outline.
-- [ ] Hover/click a line or zone → show component, material, survive %, mass, impact energy (tooltip; G4 owns the panel).
-- [ ] Toggle: "show only pieces with ≥ 10% survival".
+- [x] Impact zones on the surface: each component's 50/90% footprint polygons (`debris_component.footprint`), plus the combined footprint (`debris_forecast.footprint`). Clamped to the ground; translucent fill + outline.
+- [x] Hover/click a line or zone → show component, material, survive %, mass, impact energy (tooltip; G4 owns the panel).
+- [x] Toggle: "show only pieces with ≥ 10% survival".
 - Data: mock first (`mock/debris.ts`), then `useTable(tables.debrisComponent)` filtered by `objectId` once R3's schema lands.
-- **Done when:** selecting a satellite shows colored lines to landing zones, and the zones read clearly from orbit height and when zoomed in.
+- **Done when:** selecting a satellite shows colored lines to landing zones, and the zones read clearly from orbit height and when zoomed in. ✅ (checked in headless Chrome against live objects + mock debris)
+
+**How G2 works (for G3/G4 and the live-data switch):**
+- One call in `Globe.tsx`: `const debrisUi = useDebrisLines(viewer, debris)`, rendered as `{debrisUi}` (toggle + MOCK/modeled label + tooltip). Files: `globe/debrisLines.ts` (lines, landing markers, hover/click), `globe/impactZones.ts` (zones), `globe/debrisPick.ts` (toggle + tooltip stores, `materialColor`), `globe/debrisOverlay.tsx` + `.css`.
+- **Where a line starts:** the landing zones belong to the forecast re-entry time, but the satellite may be anywhere on its orbit at the current clock time. A line starts at the live satellite (G1's `selected-orbit:<id>` entity) while its landing point is above the satellite's horizon (e.g. when the clock is at break-up), otherwise at `debris.breakup`, so lines never cut through the Earth.
+- Landing point per component: `impact` (mock), else the real `/debris` `footprint.center` (`[lon, lat]`). If the real `footprint.samples` are present, up to 12 faint extra lines per component show the spread.
+- Each layer is its own `CustomDataSource` (`g2-debris-lines`, `g2-impact-zones`), removed when the selection changes. Clicking a G2 line/zone pins its tooltip and does not change the selection.
+- **Live data (after #8):** `debris.ts` maps the `debris_*` tables to this shape (`impact` from `impact_lat/lon`, `breakup` JSON). Open R2/R3 item: the GX10 `/debris` result must carry `breakup` and per-component `impact` for those columns (it currently returns `entry_time` and `footprint.center`). Until then live components have no landing point (the module stores only `footprint.bands`), so G2 shows their zones but no lines; it uses `footprint.center` if a future adapter passes it, and without a valid `breakup` it draws no line rather than NaN positions.
 
 ## G3: falling-debris animation, live pieces, satellite camera (teammate 3)
 - [ ] Falling paths: for the selected object, turn `debris_track.points` (`[t, lat, lon, alt_km]`) into Cesium time-dynamic positions (`SampledPositionProperty`) so pieces fall in 3D as the clock plays.
