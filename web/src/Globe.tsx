@@ -18,7 +18,7 @@ function Layers() {
   const { objects, reentry } = useTrackedObjects();
   useSatelliteLayer(viewer, objects, reentry); // G1
   useClickToSelect(viewer); // G1
-  useSelectedOrbit(viewer, objects, reentry); // G1
+  useSelectedOrbit(viewer, objects); // G1
   const debris = useSelectedDebris(objects, reentry); // shared by G2-G4 (mock until the debris tables exist)
   const debrisUi = useDebrisLines(viewer, debris); // G2: lines to landing points + impact zones
   // G3: useFallingDebris(viewer, debris)

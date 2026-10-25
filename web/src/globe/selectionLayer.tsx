@@ -79,7 +79,7 @@ export function useClickToSelect(viewer: Viewer | null): void {
 }
 
 /** Orbit path + label for the selected object. */
-export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[], reentry: ReentryLookup): void {
+export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]): void {
   const selected = useSelected();
   const obj = useMemo(() => objects.find(o => o.id === selected), [objects, selected]);
 
@@ -95,8 +95,6 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
       }
       return cached;
     }, false);
-    const r = reentry.get(obj.id);
-    const when = r ? ` · re-entry ~${new Date(r.t50).toISOString().slice(5, 16).replace('T', ' ')}Z` : '';
     const entity = viewer.entities.add(
       new Entity({
         id: `selected-orbit:${obj.id}`,
@@ -115,7 +113,7 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
         position: new CallbackPositionProperty(time => positionAt(obj, JulianDate.toDate(time ?? viewer.clock.currentTime)), false),
         viewFrom: new ConstantProperty(new Cartesian3(0, -2_000_000, 1_500_000)),
         label: {
-          text: `${obj.name} (${obj.noradId})${when}`,
+          text: `${obj.name} (${obj.noradId})`,
           font: '14px sans-serif',
           fillColor: Color.WHITE,
           outlineColor: Color.BLACK,
@@ -133,7 +131,7 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
       viewer.entities.remove(entity);
       viewer.entities.remove(track);
     };
-  }, [viewer, obj, reentry]);
+  }, [viewer, obj]);
 }
 
 /** Small info card for the selected object (G4 will replace this with the real panel). */
