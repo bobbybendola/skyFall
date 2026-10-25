@@ -5,6 +5,7 @@ import { useEffect, useMemo } from 'react';
 import {
   CallbackPositionProperty,
   CallbackProperty,
+  ConstantProperty,
   Cartesian2,
   Cartesian3,
   Color,
@@ -22,10 +23,29 @@ import { sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
 import type { DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
+import { localTime, reentryCss, relTime } from './legend.tsx';
 
 const PATH_HOURS = 3;
 const PATH_STEP_S = 60;
 const PATH_REFRESH_S = 300; // recompute the path when the clock moves this far
+const trackId = (id: string) => `selected-track:${id}`;
+
+// Object the camera should stay locked on. Its entity may not exist yet when
+// "Fly to" is clicked (selection effects run after render), so remember it.
+let followId: string | null = null;
+
+/** Lock the camera onto an object; it follows it as the clock moves. */
+export function followObject(viewer: Viewer, id: string): void {
+  followId = id;
+  const e = viewer.entities.getById(trackId(id));
+  if (e) viewer.trackedEntity = e;
+}
+
+/** Release the camera lock. */
+export function unfollow(viewer: Viewer): void {
+  followId = null;
+  viewer.trackedEntity = undefined;
+}
 
 function positionAt(o: TrackedObject, when: Date): Cartesian3 | undefined {
   const p = sgp4Point(satKey(o), o.elements, when);
@@ -79,12 +99,20 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
     const entity = viewer.entities.add(
       new Entity({
         id: `selected-orbit:${obj.id}`,
-        position: new CallbackPositionProperty(time => positionAt(obj, JulianDate.toDate(time ?? viewer.clock.currentTime)), false),
         polyline: {
           positions: path,
           width: 3,
           material: new PolylineGlowMaterialProperty({ glowPower: 0.2, color: Color.CYAN.withAlpha(0.8) }),
         },
+      })
+    );
+    // Separate entity for the moving point + label, so camera tracking frames
+    // the object and not the whole 3 h orbit line.
+    const track = viewer.entities.add(
+      new Entity({
+        id: trackId(obj.id),
+        position: new CallbackPositionProperty(time => positionAt(obj, JulianDate.toDate(time ?? viewer.clock.currentTime)), false),
+        viewFrom: new ConstantProperty(new Cartesian3(0, -2_000_000, 1_500_000)),
         label: {
           text: `${obj.name} (${obj.noradId})${when}`,
           font: '14px sans-serif',
@@ -97,8 +125,12 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
         },
       })
     );
+    if (followId === obj.id) viewer.trackedEntity = track;
     return () => {
-      if (!viewer.isDestroyed()) viewer.entities.remove(entity);
+      if (viewer.isDestroyed()) return;
+      if (viewer.trackedEntity === track) viewer.trackedEntity = undefined;
+      viewer.entities.remove(entity);
+      viewer.entities.remove(track);
     };
   }, [viewer, obj, reentry]);
 }
@@ -125,12 +157,8 @@ export function SelectedCard({
   } catch {
     /* ignore */
   }
-  const fmt = (t: number) => (Number.isFinite(t) ? new Date(t).toISOString().slice(5, 16).replace('T', ' ') + 'Z' : '?');
-  const flyTo = () => {
-    const now = JulianDate.toDate(viewer.clock.currentTime);
-    const p = sgp4Point(satKey(obj), obj.elements, now);
-    if (p) viewer.camera.flyTo({ destination: Cartesian3.fromDegrees(p.lon, p.lat, p.altKm * 1000 + 3_000_000) });
-  };
+  const nowMs = JulianDate.toDate(viewer.clock.currentTime).getTime();
+  const flyTo = () => followObject(viewer, obj.id);
   return (
     <div className="globe-info">
       <b>{obj.name}</b> <span className="muted">NORAD {obj.noradId}</span>
@@ -138,9 +166,14 @@ export function SelectedCard({
         real orbit data ({obj.source === 'CANDIDATE' ? 'CelesTrak' : obj.source}) · elements {String(el.EPOCH ?? '').slice(0, 16)}Z
       </div>
       {r ? (
-        <div>
-          re-entry forecast {fmt(r.t05)} → <b>{fmt(r.t50)}</b> → {fmt(r.t95)} ({Math.round(r.p * 100)}% inside horizon)
-        </div>
+        <>
+          <div>
+            <span className="dot" style={{ background: reentryCss(r.t50, nowMs) }} /> Likely re-entry <b>{relTime(r.t50, nowMs)}</b> ({localTime(r.t50)})
+          </div>
+          <div className="muted">
+            90% chance between {relTime(r.t05, nowMs).replace(/^in /, '')} and {relTime(r.t95, nowMs).replace(/^in /, '')} from now · {Math.round(r.p * 100)}% of runs re-enter inside the forecast window
+          </div>
+        </>
       ) : (
         <div className="muted">no re-entry forecast inside the horizon</div>
       )}
@@ -150,7 +183,7 @@ export function SelectedCard({
           {debris.components.length} component types · ~{debris.surviving_mass_kg.mean} kg
         </div>
       )}
-      <button onClick={flyTo}>Fly to</button> <button onClick={() => setSelected(null)}>Clear</button>
+      <button onClick={flyTo}>Fly to</button> <button onClick={() => { unfollow(viewer); setSelected(null); }}>Clear</button>
     </div>
   );
 }

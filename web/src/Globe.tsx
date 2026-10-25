@@ -5,6 +5,9 @@ import { GlobeView, useViewer } from './globe/GlobeView.tsx';
 import { useSatelliteLayer, useTrackedObjects } from './globe/satellites.ts';
 import { SelectedCard, useClickToSelect, useSelectedOrbit } from './globe/selectionLayer.tsx';
 import { useSelectedDebris } from './globe/debris.ts';
+import { DebrisList } from './globe/debrisList.tsx';
+import { useDebrisLines } from './globe/debrisLines.ts';
+import { Legend } from './globe/legend.tsx';
 
 function Layers() {
   const viewer = useViewer();
@@ -13,8 +16,16 @@ function Layers() {
   useClickToSelect(viewer); // G1
   useSelectedOrbit(viewer, objects, reentry); // G1
   const debris = useSelectedDebris(objects, reentry); // shared by G2-G4 (mock until the debris tables exist)
-  // G2: useDebrisLines(viewer, debris)   G3: useFallingDebris(viewer, debris)
-  return <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />;
+  const debrisUi = useDebrisLines(viewer, debris); // G2: lines to landing points + impact zones
+  // G3: useFallingDebris(viewer, debris)
+  return (
+    <>
+      {debrisUi}
+      <Legend />
+      <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
+      <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />
+    </>
+  );
 }
 
 export function Globe() {
