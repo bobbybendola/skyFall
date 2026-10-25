@@ -1,6 +1,6 @@
 /* Satellite model viewer: top right, under Cesium's home / scene-mode buttons. */
-.sat-model { position: absolute; top: 44px; right: 8px; z-index: 2; width: 320px; max-width: calc(100% - 16px); max-height: calc(100% - 260px); overflow-y: auto; background: rgba(10,10,14,0.85); color: #fff; padding: 6px 10px 8px; border-radius: 4px; font-size: 12px; line-height: 1.45; border: 1px solid rgba(255,255,255,0.15); box-sizing: border-box; }
-.sat-model.closed { width: auto; }
+.sat-model { width: 100%; overflow-y: auto; background: rgba(10,10,14,0.85); color: #fff; padding: 6px 10px 8px; border-radius: 4px; font-size: 12px; line-height: 1.45; border: 1px solid rgba(255,255,255,0.15); box-sizing: border-box; }
+.sat-model.closed { width: auto; align-self: flex-end; }
 .sat-model .muted { color: #bbb; }
 .sat-model .small { font-size: 11px; }
 .sat-model .mock { color: #ffcf5c; font-weight: 600; margin-left: 4px; }
@@ -18,4 +18,4 @@
 .sat-model .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid #888; }
 .sat-model .danger { color: #ff8080; }
 .sat-model .link { background: none; border: none; color: #9cc3ff; cursor: pointer; padding: 0 0 0 6px; font-size: 11px; text-decoration: underline; }
-@media (max-width: 640px) { .sat-model { width: calc(100% - 16px); max-height: 45%; } .sat-model-canvas { height: 150px; } }
+@media (max-width: 640px) { .sat-model-canvas { height: 150px; } }

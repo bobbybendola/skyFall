@@ -29,12 +29,19 @@ function Layers() {
   // G3: useFallingDebris(viewer, debris)
   return (
     <>
-      {debrisUi}
-      <Legend viewer={viewer} objects={objects} reentry={reentry} forecasted={forecasted} danger={danger} />
-      <MapControls viewer={viewer} />
-      <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
-      <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />
-      <SatModelPanel objects={objects} debris={debris} />
+      {/* Panels stack in two columns (one on phones) so they never overlap. */}
+      <div className="globe-docks">
+        <div className="globe-stack left">
+          {debrisUi}
+          <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
+          <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />
+          <MapControls viewer={viewer} />
+        </div>
+        <div className="globe-stack right">
+          <SatModelPanel objects={objects} debris={debris} />
+          <Legend viewer={viewer} objects={objects} reentry={reentry} forecasted={forecasted} danger={danger} />
+        </div>
+      </div>
     </>
   );
 }
