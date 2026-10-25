@@ -3,6 +3,7 @@
 import { useSpacetimeDB } from 'spacetimedb/react';
 import { GlobeView, useViewer } from './globe/GlobeView.tsx';
 import { useSatelliteLayer, useTrackedObjects } from './globe/satellites.ts';
+import { useDangerLookup, useForecasted } from './globe/pointStyle.ts';
 import { SelectedCard, useClickToSelect, useSelectedOrbit } from './globe/selectionLayer.tsx';
 import { useSelectedDebris } from './globe/debris.ts';
 import { DebrisList } from './globe/debrisList.tsx';
@@ -18,6 +19,8 @@ function Layers() {
   useDetailedMap(viewer); // Esri imagery + terrain (falls back to the offline globe)
   useOrbitControls(viewer); // drag pivots: Earth's center, ground point or the selected satellite
   const { objects, reentry } = useTrackedObjects();
+  const forecasted = useForecasted();
+  const danger = useDangerLookup();
   useSatelliteLayer(viewer, objects, reentry); // G1
   useClickToSelect(viewer); // G1
   useSelectedOrbit(viewer, objects); // G1
@@ -27,7 +30,7 @@ function Layers() {
   return (
     <>
       {debrisUi}
-      <Legend />
+      <Legend viewer={viewer} objects={objects} reentry={reentry} forecasted={forecasted} danger={danger} />
       <MapControls viewer={viewer} />
       <DebrisList viewer={viewer} objects={objects} reentry={reentry} />
       <SelectedCard viewer={viewer} objects={objects} reentry={reentry} debris={debris} />

@@ -4,7 +4,8 @@ import type { Viewer } from 'cesium';
 import { useTable } from 'spacetimedb/react';
 import { tables } from '../module_bindings/index.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
-import { reentryCss, relTime, useClockNow } from './legend.tsx';
+import { EntryDot, relTime, useClockNow } from './legend.tsx';
+import { DANGER_P } from './pointStyle.ts';
 import { followObject } from './selectionLayer.tsx';
 import { setSelected, useSelected } from './selection.ts';
 import { sgp4Point } from '../orbit.ts';
@@ -35,7 +36,7 @@ export function DebrisList({ viewer, objects, reentry }: { viewer: Viewer | null
       {rows.length === 0 && <div className="muted">none yet</div>}
       {rows.map(({ f, obj, t50 }) => (
         <button key={obj.id} className={obj.id === selected ? 'sel' : ''} onClick={() => pick(obj)}>
-          <span className="dot" style={{ background: reentryCss(t50, nowMs) }} />
+          <EntryDot r={reentry.get(obj.id)} nowMs={nowMs} dangerous={f.pHazard >= DANGER_P} />
           {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {altKm(obj, nowMs)} · {f.pHazard >= 0 ? `~${f.hazardPiecesMean >= 2 ? Math.round(f.hazardPiecesMean) : f.hazardPiecesMean.toFixed(1)} dangerous` : `${Math.round(f.pAnySurvives * 100)}% any piece`} · ~{Math.round(f.survivingMassKgMean)} kg</span>
         </button>
       ))}

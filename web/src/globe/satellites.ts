@@ -1,6 +1,6 @@
 // G1 satellites layer: every tracked object with orbit elements, drawn at its
 // real altitude from SGP4 and moved by the Cesium clock (scrubbing the
-// timeline moves them). Color = forecast re-entry time. One point collection,
+// timeline moves them). Look (color, danger ring) comes from pointStyle.ts. One point collection,
 // so it scales to the full catalog later (see docs/SPACETRACK_NOTES.md).
 import { useEffect, useMemo, useRef } from 'react';
 import {
@@ -16,6 +16,7 @@ import { useTable } from 'spacetimedb/react';
 import { tables } from '../module_bindings/index.ts';
 import { sgp4Point } from '../orbit.ts';
 import { getSelected, useSelected } from './selection.ts';
+import { DANGER_P, passesFilter, pointFilter, pointLook, useDangerLookup, useForecasted, whenOf, type When } from './pointStyle.ts';
 
 const UPDATE_EVERY_MS = 1000; // wall time between position updates
 const JUMP_S = 30; // or immediately when the clock jumps this far (scrubbing)
@@ -23,18 +24,8 @@ const JUMP_S = 30; // or immediately when the clock jumps this far (scrubbing)
 export type TrackedObject = { id: string; name: string; noradId: number; source: string; elements: string };
 
 /** Forecast median (ms since epoch) by object id; NaN when unknown. */
-export type ReentryLookup = Map<string, { t50: number; t05: number; t95: number; p: number }>;
-
-export function reentryColor(t50: number | undefined, nowMs: number, selected: boolean): Color {
-  if (selected) return Color.CYAN;
-  if (t50 === undefined || !Number.isFinite(t50)) return Color.LIGHTGRAY.withAlpha(0.8);
-  const h = (t50 - nowMs) / 3.6e6;
-  if (h < 0) return Color.DIMGRAY; // forecast time already passed
-  if (h < 12) return Color.RED;
-  if (h < 48) return Color.ORANGE;
-  if (h < 7 * 24) return Color.YELLOW;
-  return Color.LIGHTGRAY;
-}
+export type ReentryEntry = { t50: number; t05: number; t95: number; p: number };
+export type ReentryLookup = Map<string, ReentryEntry>;
 
 /** Objects + their forecast, shared by the satellite layer and the selection. */
 export function useTrackedObjects(): { objects: TrackedObject[]; reentry: ReentryLookup } {
@@ -74,10 +65,13 @@ export function satKey(o: TrackedObject): string {
 
 export function useSatelliteLayer(viewer: Viewer | null, objects: TrackedObject[], reentry: ReentryLookup): void {
   const selected = useSelected();
+  const forecasted = useForecasted();
+  const danger = useDangerLookup();
+  const filter = pointFilter.use();
   const points = useRef<Map<string, PointPrimitive>>(new Map());
   const collection = useRef<PointPrimitiveCollection | null>(null);
-  const latest = useRef({ objects, reentry });
-  latest.current = { objects, reentry };
+  const latest = useRef<Looks>({ objects, reentry, forecasted, danger, filter });
+  latest.current = { objects, reentry, forecasted, danger, filter };
 
   // Create the collection once per viewer.
   useEffect(() => {
@@ -93,7 +87,7 @@ export function useSatelliteLayer(viewer: Viewer | null, objects: TrackedObject[
       if (!jumped && wall - lastWall < UPDATE_EVERY_MS) return;
       lastWall = wall;
       lastSim = t.clone();
-      placeAll(c, points.current, latest.current.objects, latest.current.reentry, JulianDate.toDate(t));
+      placeAll(points.current, latest.current, JulianDate.toDate(t));
     };
     const remove = viewer.scene.preUpdate.addEventListener(update);
     return () => {
@@ -120,17 +114,19 @@ export function useSatelliteLayer(viewer: Viewer | null, objects: TrackedObject[
         points.current.set(o.id, c.add({ id: o.id, pixelSize: 6, outlineColor: Color.BLACK, outlineWidth: 1, scaleByDistance: new NearFarScalar(1e6, 1.6, 4e7, 0.8) }));
       }
     }
-    placeAll(c, points.current, objects, reentry, JulianDate.toDate(viewer.clock.currentTime));
-  }, [viewer, objects, reentry, selected]);
+    placeAll(points.current, latest.current, JulianDate.toDate(viewer.clock.currentTime));
+  }, [viewer, objects, reentry, forecasted, danger, filter, selected]);
 }
 
-function placeAll(
-  _c: PointPrimitiveCollection,
-  points: Map<string, PointPrimitive>,
-  objects: TrackedObject[],
-  reentry: ReentryLookup,
-  when: Date
-): void {
+type Looks = {
+  objects: TrackedObject[];
+  reentry: ReentryLookup;
+  forecasted: Set<string>;
+  danger: Map<string, number>;
+  filter: When | 'danger' | null;
+};
+
+function placeAll(points: Map<string, PointPrimitive>, { objects, reentry, forecasted, danger, filter }: Looks, when: Date): void {
   const sel = getSelected();
   const nowMs = when.getTime();
   for (const o of objects) {
@@ -141,10 +137,16 @@ function placeAll(
       p.show = false; // no valid orbit at this time (e.g. already re-entered)
       continue;
     }
-    p.show = true;
-    p.position = Cartesian3.fromDegrees(pos.lon, pos.lat, pos.altKm * 1000);
     const isSel = o.id === sel;
-    p.color = reentryColor(reentry.get(o.id)?.t50, nowMs, isSel);
-    p.pixelSize = isSel ? 12 : 6;
+    const w = whenOf(reentry.get(o.id), forecasted.has(o.id), nowMs);
+    const dangerous = (danger.get(o.id) ?? 0) >= DANGER_P;
+    p.show = isSel || passesFilter(filter, w, dangerous);
+    if (!p.show) continue;
+    p.position = Cartesian3.fromDegrees(pos.lon, pos.lat, pos.altKm * 1000);
+    const look = pointLook(w, dangerous, isSel);
+    p.color = look.color;
+    p.pixelSize = look.size;
+    p.outlineColor = look.outlineColor;
+    p.outlineWidth = look.outlineWidth;
   }
 }
