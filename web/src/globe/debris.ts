@@ -40,6 +40,8 @@ export function useSelectedDebris(objects: TrackedObject[], reentry: ReentryLook
         breakup: parse(live.breakup, { t_unix_s: 0, lat: 0, lon: 0, alt_km: 0 }),
         p_any_survives: live.pAnySurvives,
         surviving_mass_kg: { mean: live.survivingMassKgMean, p95: live.survivingMassKgP95 },
+        hazard: live.pHazard >= 0 ? { p_any: live.pHazard, pieces_mean: live.hazardPiecesMean, pieces_p95: live.hazardPiecesP95 } : null,
+        surviving_mass_frac: live.survivingMassFrac >= 0 ? live.survivingMassFrac : null,
         casualty_area_m2: { mean: live.casualtyAreaM2Mean },
         components: comps.map(c => ({
           name: c.name,
@@ -47,6 +49,7 @@ export function useSelectedDebris(objects: TrackedObject[], reentry: ReentryLook
           shape: c.shape,
           count: c.count,
           p_survive: c.pSurvive,
+          p_hazard: c.pHazard >= 0 ? c.pHazard : null,
           mass_kg: { start: c.massKgStart, mean: c.massKgMean },
           impact_speed_ms: { mean: c.impactSpeedMsMean ?? null },
           impact_energy_j: { mean: c.impactEnergyJMean ?? null },

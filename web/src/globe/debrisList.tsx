@@ -30,7 +30,7 @@ export function DebrisList({ viewer, objects, reentry }: { viewer: Viewer | null
       {rows.map(({ f, obj, t50 }) => (
         <button key={obj.id} className={obj.id === selected ? 'sel' : ''} onClick={() => pick(obj)}>
           <span className="dot" style={{ background: reentryCss(t50, nowMs) }} />
-          {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {Math.round(f.pAnySurvives * 100)}% survives · ~{Math.round(f.survivingMassKgMean)} kg</span>
+          {obj.name} <span className="muted">· {Number.isFinite(t50) ? relTime(t50, nowMs) : 'no forecast'} · {f.pHazard >= 0 ? `~${f.hazardPiecesMean >= 2 ? Math.round(f.hazardPiecesMean) : f.hazardPiecesMean.toFixed(1)} dangerous` : `${Math.round(f.pAnySurvives * 100)}% any piece`} · ~{Math.round(f.survivingMassKgMean)} kg</span>
         </button>
       ))}
     </div>

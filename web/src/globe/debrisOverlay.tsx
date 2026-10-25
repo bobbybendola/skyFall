@@ -3,7 +3,7 @@
 // (The full breakdown panel and legend are G4's.)
 import './debrisOverlay.css';
 import type { DebrisResult } from './debrisTypes.ts';
-import { MATERIAL_COLOR, OTHER_MATERIAL_COLOR } from './debrisTypes.ts';
+import { dangerText, MATERIAL_COLOR, OTHER_MATERIAL_COLOR } from './debrisTypes.ts';
 import { hovered, MIN_SURVIVAL, onlySurvivors, type PickInfo } from './debrisPick.ts';
 
 const pct = (p: number) => `${Math.round(p * 100)}%`;
@@ -18,8 +18,9 @@ function Tip({ info, debris }: { info: PickInfo; debris: DebrisResult }) {
       <>
         <b>All surviving pieces</b> {tag}
         <div>{info.level}% impact zone · {num(debris.footprint.area_km2_90, 'km² (90%)', 0)}</div>
-        <div>chance any piece survives: {pct(debris.p_any_survives)}</div>
-        <div>surviving mass: {num(debris.surviving_mass_kg.mean, 'kg')} (p95 {num(debris.surviving_mass_kg.p95, 'kg')})</div>
+        <div>{dangerText(debris)}{debris.hazard && <span className="muted"> · {pct(debris.hazard.p_any)} chance of at least one</span>}</div>
+        <div>surviving mass: {num(debris.surviving_mass_kg.mean, 'kg')}{debris.surviving_mass_frac != null && ` (${pct(debris.surviving_mass_frac)} of the satellite)`} · p95 {num(debris.surviving_mass_kg.p95, 'kg')}</div>
+        {debris.hazard && <div className="muted">any fragment at all reaches the ground: {pct(debris.p_any_survives)} (mostly harmless)</div>}
       </>
     );
   }
@@ -32,7 +33,7 @@ function Tip({ info, debris }: { info: PickInfo; debris: DebrisResult }) {
         {c.material} {c.shape}
         {info.kind === 'zone' ? ` · ${info.level}% impact zone` : ' · line to predicted landing point'}
       </div>
-      <div>survives: {pct(c.p_survive)}</div>
+      <div>reaches the ground: {pct(c.p_survive)}{c.p_hazard != null && ` · dangerous (>15 J): ${pct(c.p_hazard)}`}</div>
       <div>
         mass left: {num(c.mass_kg.mean, 'kg', 2)} of {num(c.mass_kg.start, 'kg')}
       </div>
