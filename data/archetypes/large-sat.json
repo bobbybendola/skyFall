@@ -1,0 +1,23 @@
+{
+  "id": "large-sat",
+  "name": "Large LEO spacecraft, ~1-2 t (e.g. Swift, Yaogan, Shiyan)",
+  "applies_to": {"object_type": ["PAY", "UNK"], "name_regex": "^(SWIFT|YAOGAN|SHIYAN)\\b", "priority": 5},
+  "confidence": "low",
+  "sources": [
+    "Neil Gehrels Swift Observatory ~1,470 kg at launch: NASA mission facts (CHECK)",
+    "Yaogan / Shiyan masses are not published; ~1-2 t class is ASSUMED from launch vehicle and bus family (CHECK)",
+    "Layout and component masses below are ASSUMED (~1,200 kg total)"
+  ],
+  "components": [
+    {"name": "bus structure panel", "material": "Al6061",  "shape": "plate",    "mass_kg": 60,  "dims_m": [2.0, 1.6, 0.03], "count": 6, "parent": null, "_note": "box bus as Al honeycomb panels ASSUMED"},
+    {"name": "instrument structure","material": "CFRP",    "shape": "cylinder", "mass_kg": 180, "dims_m": [2.5, 1.0], "count": 1, "parent": null},
+    {"name": "primary mirror",      "material": "Glass",   "shape": "cylinder", "mass_kg": 40,  "dims_m": [0.10, 0.6], "count": 1, "parent": "instrument structure"},
+    {"name": "solar array",         "material": "CFRP",    "shape": "plate",    "mass_kg": 40,  "dims_m": [4.0, 1.5, 0.03], "count": 2, "parent": null},
+    {"name": "reaction wheel",      "material": "SS304",   "shape": "cylinder", "mass_kg": 10,  "dims_m": [0.10, 0.35], "count": 6, "parent": "bus structure panel"},
+    {"name": "propellant tank",     "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 25,  "dims_m": [0.8], "count": 2, "parent": "bus structure panel", "_note": "Swift itself has no propulsion; kept for the Yaogan/Shiyan class (ASSUMED)"},
+    {"name": "battery pack",        "material": "Copper",  "shape": "box",      "mass_kg": 40,  "dims_m": [0.5, 0.4, 0.25], "count": 2, "parent": "bus structure panel"},
+    {"name": "avionics box",        "material": "Al6061",  "shape": "box",      "mass_kg": 15,  "dims_m": [0.4, 0.3, 0.2], "count": 12, "parent": "bus structure panel"},
+    {"name": "magnetorquer",        "material": "Copper",  "shape": "cylinder", "mass_kg": 5,   "dims_m": [0.8, 0.05], "count": 3, "parent": "bus structure panel"},
+    {"name": "harness and brackets","material": "Al6061",  "shape": "box",      "mass_kg": 160, "dims_m": [1.5, 1.2, 0.3], "count": 1, "parent": "bus structure panel"}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "microsat",
+  "name": "Microsatellite, 15-50 kg (e.g. GHGSat-C, Jilin-1 Gaofen 03)",
+  "applies_to": {"object_type": ["PAY", "UNK"], "name_regex": "^(GHGSAT|JILIN-1 GAOFEN)\\b", "priority": 5},
+  "confidence": "low",
+  "sources": [
+    "GHGSat-C ~15 kg and Jilin-1 Gaofen 03 ~40 kg class: public operator / CGSTL descriptions (CHECK both)",
+    "Layout and component masses below are ASSUMED (~35 kg total)"
+  ],
+  "components": [
+    {"name": "bus structure",   "material": "Al6061", "shape": "box",      "mass_kg": 10,  "dims_m": [0.5, 0.4, 0.4], "count": 1, "parent": null},
+    {"name": "solar array",     "material": "CFRP",   "shape": "plate",    "mass_kg": 2.5, "dims_m": [0.8, 0.4, 0.02], "count": 2, "parent": null},
+    {"name": "telescope barrel","material": "CFRP",   "shape": "cylinder", "mass_kg": 4,   "dims_m": [0.40, 0.25], "count": 1, "parent": "bus structure"},
+    {"name": "telescope mirror","material": "Glass",  "shape": "cylinder", "mass_kg": 2,   "dims_m": [0.04, 0.20], "count": 1, "parent": "telescope barrel"},
+    {"name": "reaction wheel",  "material": "SS304",  "shape": "cylinder", "mass_kg": 0.8, "dims_m": [0.04, 0.10], "count": 4, "parent": "bus structure"},
+    {"name": "battery pack",    "material": "Copper", "shape": "box",      "mass_kg": 3,   "dims_m": [0.20, 0.15, 0.10], "count": 1, "parent": "bus structure"},
+    {"name": "avionics box",    "material": "Al6061", "shape": "box",      "mass_kg": 1.5, "dims_m": [0.20, 0.15, 0.06], "count": 4, "parent": "bus structure"},
+    {"name": "propellant tank", "material": "Ti6Al4V","shape": "sphere",   "mass_kg": 1,   "dims_m": [0.18], "count": 1, "parent": "bus structure"}
+  ]
+}
