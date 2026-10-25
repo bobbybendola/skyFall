@@ -226,6 +226,23 @@ export const NoaaTick = __t.object("NoaaTick", {
 });
 export type NoaaTick = __Infer<typeof NoaaTick>;
 
+export const ObjectPosition = __t.object("ObjectPosition", {
+  objectId: __t.string(),
+  lat: __t.f64(),
+  lon: __t.f64(),
+  altKm: __t.f64(),
+  at: __t.timestamp(),
+  model: __t.string(),
+  elementsEpoch: __t.string(),
+});
+export type ObjectPosition = __Infer<typeof ObjectPosition>;
+
+export const PositionTick = __t.object("PositionTick", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type PositionTick = __Infer<typeof PositionTick>;
+
 export const ReentryObject = __t.object("ReentryObject", {
   id: __t.string(),
   name: __t.string(),

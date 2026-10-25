@@ -81,6 +81,7 @@ Public unless noted. TS field names are camelCase; SpacetimeDB stores the snake_
 | `debris_forecast` | `object_id` | `version`, `archetype_id`, `forecast_version` (which forecast it used), `n_particles`, `p_any_survives`, `surviving_mass_kg_mean`, `surviving_mass_kg_p95`, `casualty_area_m2_mean`, `footprint` (JSON bands 50/90), `area_km2_90`, `impact_t_q05?`, `impact_t_q50?`, `impact_t_q95?`, `tier`, `device`, `computed_at`, `note` |
 | `debris_component` | `id` (auto) | `object_id` (index), `version`, `name`, `material`, `shape`, `count`, `mass_kg_start`, `p_survive`, `mass_kg_mean`, `impact_speed_ms_mean`, `impact_energy_j_mean`, `demise_alt_km_mean?`, `footprint` (JSON bands). Rows for the previous version are deleted on publish |
 | `debris_track` | `id` (auto) | `object_id` (index), `version`, `component`, `survived` (bool), `points` (JSON `[[t_unix, lat, lon, alt_km], ...]`, ≤ 60 points). A few representative trajectories per component for the 3D animation |
+| `object_position` | `object_id` | `lat`, `lon`, `alt_km`, `at`, `model` (`sgp4` \| `replay-circular`), `elements_epoch`. Current sub-satellite point, recomputed by the module from the stored elements (satellite.js 6.0.2 SGP4): every 60 s, every 5 s within 1 h of the forecast re-entry. Row removed once the object decays or SGP4 gives no position |
 | `debris_history` | `id` (auto) | `object_id`, `version`, `p_any_survives`, `surviving_mass_kg_mean`, `area_km2_90`, `tier`, `computed_at` |
 | `fragment_event` (stretch) | `id` (auto) | `parent_norad`, `kind` (`EXPLOSION` \| `COLLISION` \| `WHATIF`), `at`, `params` (JSON), `n_fragments`, `status`, `created_by` |
 | `fragment_snapshot` (stretch) | `id` (auto) | `event_id` (index), `t_offset_s`, `positions` (packed base64 float32 `[lat, lon, alt]` × N), `n_alive`, `n_reentered` |
@@ -115,6 +116,7 @@ Feed names in `feed_status`: `noaa_swpc`, `celestrak_decaying` (module), `celest
 | `load_replay_script(event_id, rows)` | reducer | operator | load the simulated sightings from `tools/sighting-gen` |
 | `start_replay(event_id, t_offset, speed)`, `pause_replay()` | reducer | operator | drive the replay clock |
 | `replay_step` | scheduled reducer, 1 s | module | emit due `replay_sighting` rows as `SIM` sightings |
+| `update_positions` | scheduled reducer, 5 s | module | refresh `object_position` rows that are due (60 s, or 5 s near re-entry); bootstrapped by `sweep` on an existing database |
 | `reset_demo(object_id)` | reducer | operator | delete DEMO/SIM sightings, their jobs, stats and history; rewind the script; queue a baseline corridor |
 | `noaa_poll` | scheduled procedure, 15 min | module | fetch Kp + F10.7 over HTTP, write `space_weather` + `feed_status` |
 | `celestrak_poll` | scheduled procedure, 2 h | module | fetch `SPECIAL=DECAYING` (skips if attempted < 2 h ago, never retries in a loop), upsert `CANDIDATE` objects |
