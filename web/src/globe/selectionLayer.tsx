@@ -23,13 +23,14 @@ import { altitudeInfo, altitudeText, sgp4Point } from '../orbit.ts';
 import { satKey, type ReentryLookup, type TrackedObject } from './satellites.ts';
 import { dangerText, type DebrisResult } from './debrisTypes.ts';
 import { setSelected, useSelected } from './selection.ts';
-import { localTime, reentryCss, relTime, useClockNow } from './legend.tsx';
+import { EntryDot, localTime, relTime, useClockNow } from './legend.tsx';
+import { DANGER_P } from './pointStyle.ts';
 import { resetClock } from './cesium-setup.ts';
 
 const PATH_HOURS = 3;
 const PATH_STEP_S = 60;
 const PATH_REFRESH_S = 300; // recompute the path when the clock moves this far
-const trackId = (id: string) => `selected-track:${id}`;
+export const trackId = (id: string) => `selected-track:${id}`;
 
 // Object the camera should stay locked on. Its entity may not exist yet when
 // "Fly to" is clicked (selection effects run after render), so remember it.
@@ -51,6 +52,21 @@ export function unfollow(viewer: Viewer): void {
 function positionAt(o: TrackedObject, when: Date): Cartesian3 | undefined {
   const p = sgp4Point(satKey(o), o.elements, when);
   return p ? Cartesian3.fromDegrees(p.lon, p.lat, p.altKm * 1000) : undefined;
+}
+
+const scratchJulian = new JulianDate();
+
+/** Position at a Cesium time with sub-millisecond precision. A Date only holds whole
+ * milliseconds, and Cesium's camera tracking compares positions 1 ms apart to find
+ * the direction of travel: without this it sometimes sees no movement and flips the
+ * camera frame every other frame (visible as flicker in real-time "Today" mode). */
+function positionAtTime(o: TrackedObject, t: JulianDate): Cartesian3 | undefined {
+  const d = JulianDate.toDate(t);
+  const a = positionAt(o, d);
+  const fracMs = JulianDate.secondsDifference(t, JulianDate.fromDate(d, scratchJulian)) * 1000;
+  if (!a || Math.abs(fracMs) < 1e-6) return a;
+  const b = positionAt(o, new Date(d.getTime() + Math.sign(fracMs)));
+  return b ? Cartesian3.lerp(a, b, Math.abs(fracMs), new Cartesian3()) : a;
 }
 
 function pathFrom(o: TrackedObject, start: Date): Cartesian3[] {
@@ -79,7 +95,7 @@ export function useClickToSelect(viewer: Viewer | null): void {
 }
 
 /** Orbit path + label for the selected object. */
-export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[], reentry: ReentryLookup): void {
+export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]): void {
   const selected = useSelected();
   const obj = useMemo(() => objects.find(o => o.id === selected), [objects, selected]);
 
@@ -95,8 +111,6 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
       }
       return cached;
     }, false);
-    const r = reentry.get(obj.id);
-    const when = r ? ` · re-entry ~${new Date(r.t50).toISOString().slice(5, 16).replace('T', ' ')}Z` : '';
     const entity = viewer.entities.add(
       new Entity({
         id: `selected-orbit:${obj.id}`,
@@ -112,10 +126,10 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
     const track = viewer.entities.add(
       new Entity({
         id: trackId(obj.id),
-        position: new CallbackPositionProperty(time => positionAt(obj, JulianDate.toDate(time ?? viewer.clock.currentTime)), false),
+        position: new CallbackPositionProperty(time => positionAtTime(obj, time ?? viewer.clock.currentTime), false),
         viewFrom: new ConstantProperty(new Cartesian3(0, -2_000_000, 1_500_000)),
         label: {
-          text: `${obj.name} (${obj.noradId})${when}`,
+          text: `${obj.name} (${obj.noradId})`,
           font: '14px sans-serif',
           fillColor: Color.WHITE,
           outlineColor: Color.BLACK,
@@ -133,7 +147,7 @@ export function useSelectedOrbit(viewer: Viewer | null, objects: TrackedObject[]
       viewer.entities.remove(entity);
       viewer.entities.remove(track);
     };
-  }, [viewer, obj, reentry]);
+  }, [viewer, obj]);
 }
 
 /** Small info card for the selected object (G4 will replace this with the real panel). */
@@ -191,7 +205,7 @@ export function SelectedCard({
       {r ? (
         <>
           <div>
-            <span className="dot" style={{ background: reentryCss(r.t50, nowMs) }} /> Likely re-entry <b>{relTime(r.t50, nowMs)}</b> ({localTime(r.t50)})
+            <EntryDot r={r} nowMs={nowMs} dangerous={(debris?.hazard?.p_any ?? 0) >= DANGER_P && debris?.source === 'live'} /> Likely re-entry <b>{relTime(r.t50, nowMs)}</b> ({localTime(r.t50)})
           </div>
           <div className="muted">
             90% chance between {relTime(r.t05, nowMs).replace(/^in /, '')} and {relTime(r.t95, nowMs).replace(/^in /, '')} from now · {Math.round(r.p * 100)}% of runs re-enter inside the forecast window

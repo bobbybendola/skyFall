@@ -1,0 +1,24 @@
+{
+  "id": "cargo-vehicle",
+  "name": "Station cargo vehicle, ~7 t (e.g. Progress MS, Cygnus)",
+  "applies_to": {"object_type": ["PAY", "UNK"], "name_regex": "^(PROGRESS|CYGNUS|TIANZHOU|HTV)\\b", "priority": 5},
+  "confidence": "low",
+  "sources": [
+    "Progress MS ~7,200 kg at launch; three sections (cargo, refuelling, service/propulsion): public Roscosmos / NASA descriptions (CHECK)",
+    "Cygnus ~7,500 kg and Tianzhou ~13,500 kg at launch differ from this layout; matched here only as the closest class (ASSUMED)",
+    "Masses at re-entry are lower (cargo unloaded, trash loaded); component masses below are ASSUMED (~6,300 kg total)"
+  ],
+  "components": [
+    {"name": "pressurized cargo module", "material": "Al6061",  "shape": "cylinder", "mass_kg": 1600, "dims_m": [3.2, 2.7], "count": 1, "parent": null},
+    {"name": "trash and stowed cargo",   "material": "CFRP",    "shape": "box",      "mass_kg": 1500, "dims_m": [1.8, 1.5, 1.5], "count": 1, "parent": "pressurized cargo module", "_note": "low-density mixed material stands in for bags of waste (ASSUMED)"},
+    {"name": "docking mechanism",        "material": "SS304",   "shape": "cylinder", "mass_kg": 250,  "dims_m": [0.6, 1.3], "count": 1, "parent": "pressurized cargo module"},
+    {"name": "refuelling module",        "material": "Al6061",  "shape": "cylinder", "mass_kg": 600,  "dims_m": [1.4, 2.2], "count": 1, "parent": null},
+    {"name": "propellant tank",          "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 60,   "dims_m": [0.9], "count": 6, "parent": "refuelling module"},
+    {"name": "service module",           "material": "Al6061",  "shape": "cylinder", "mass_kg": 1300, "dims_m": [2.3, 2.7], "count": 1, "parent": null},
+    {"name": "main engine",              "material": "SS304",   "shape": "cylinder", "mass_kg": 120,  "dims_m": [0.8, 0.5], "count": 1, "parent": "service module"},
+    {"name": "pressurant bottle",        "material": "Ti6Al4V", "shape": "sphere",   "mass_kg": 25,   "dims_m": [0.45], "count": 4, "parent": "service module"},
+    {"name": "solar array",              "material": "CFRP",    "shape": "plate",    "mass_kg": 50,   "dims_m": [5.0, 1.1, 0.03], "count": 2, "parent": null},
+    {"name": "battery pack",             "material": "Copper",  "shape": "box",      "mass_kg": 80,   "dims_m": [0.5, 0.4, 0.3], "count": 2, "parent": "service module"},
+    {"name": "avionics box",             "material": "Al6061",  "shape": "box",      "mass_kg": 20,   "dims_m": [0.4, 0.3, 0.2], "count": 10, "parent": "service module"}
+  ]
+}

@@ -50,6 +50,7 @@ export const MATERIAL_COLOR: Record<string, string> = {
   CFRP: '#222222', // carbon fibre: black
   Glass: '#7fd3ff',
   Copper: '#d67a3c',
+  Inconel: '#c9b48a', // nickel alloy (engine parts): tan
 };
 export const OTHER_MATERIAL_COLOR = '#b07cff';
 

@@ -38,6 +38,8 @@ MATERIALS = {
     "CFRP": {"density": 1600.0, "melt": 600.0, "cp": 1100.0, "fusion": 2.0e5, "emissivity": 0.85},
     "Glass": {"density": 2500.0, "melt": 1400.0, "cp": 800.0, "fusion": 1.4e5, "emissivity": 0.8},
     "Copper": {"density": 8960.0, "melt": 1356.0, "cp": 385.0, "fusion": 2.05e5, "emissivity": 0.3},
+    # Inconel 718 (rocket engine parts): textbook values, CHECK before quoting
+    "Inconel": {"density": 8190.0, "melt": 1609.0, "cp": 435.0, "fusion": 2.7e5, "emissivity": 0.3},
 }
 DRAG_COEFFICIENT = {"sphere": 0.92, "cylinder": 1.0}
 

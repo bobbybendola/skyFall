@@ -50,13 +50,19 @@ function useModel(obj: TrackedObject | undefined, debris: DebrisResult | null): 
       return { id: row.id, name: row.name, parts, confidence: row.confidence, fallback: false, why };
     }
     const generic = archetypes.find(a => a.id === 'generic');
+    // The forecast ran with the generic model, but the object has since been matched to a better one.
+    const better = debris?.source === 'live' && profile?.archetypeId && profile.archetypeId !== 'generic'
+      ? archetypes.find(a => a.id === profile.archetypeId)
+      : undefined;
     return {
       id: 'generic',
       name: generic?.name ?? 'Generic small LEO satellite (fallback)',
       parts: (generic && parseParts(generic.components)) || GENERIC_PARTS,
       confidence: generic?.confidence ?? 'low',
       fallback: true,
-      why: 'no specific model for this object: generic small-satellite assumption',
+      why: better
+        ? `this forecast ran with the generic model; the next one will use "${better.name}"`
+        : 'no specific model for this object: generic small-satellite assumption',
     };
   }, [obj?.noradId, debris?.source, debris?.archetype, archetypes, profiles]);
 }

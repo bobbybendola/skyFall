@@ -37,6 +37,84 @@ function sizeOf(p: ArchetypePart): { shape: Piece['shape']; size: Vec3 } {
   return { shape: 'box', size: [or(d[0], 0.3), or(d[1], 0.3), Math.max(MIN_THICK, or(d[2], 0.3))] };
 }
 
+/** Face-sized plates on a single box parent (CubeSat body panels) are mounted flush on its
+ * four side faces instead of packed on top. Match tolerance on the panel's two big dims. */
+const FACE_FIT = 0.15;
+
+/** Mount plate children flush on the side faces of a lone box parent; returns the parts
+ * (and copies) that did not fit a face. */
+function mountOnFaces(
+  parent: Piece,
+  items: Item[],
+  add: (p: ArchetypePart, copy: number, pos: Vec3, size?: Vec3) => Piece
+): Item[] {
+  const [px, py, pz] = parent.size;
+  // +x, -x, +y, -y; in-plane dims of each face are (other horizontal axis, z).
+  const faces = [
+    { axis: 0, sign: 1, w: py },
+    { axis: 0, sign: -1, w: py },
+    { axis: 1, sign: 1, w: px },
+    { axis: 1, sign: -1, w: px },
+  ];
+  const fits = (a: number, b: number) => Math.abs(a - b) <= FACE_FIT * Math.max(a, b);
+  const rest: typeof items = [];
+  let next = 0;
+  for (const it of items) {
+    const raw = it.p.dims_m ?? [];
+    const flat = it.p.shape === 'plate' && raw.length >= 2;
+    const big = Math.max(raw[0] ?? 0, raw[1] ?? 0);
+    const small = Math.min(raw[0] ?? 0, raw[1] ?? 0);
+    const face = faces[next];
+    if (!flat || !face || !fits(big, pz) || !fits(small, face.w)) {
+      rest.push(it);
+      continue;
+    }
+    next++;
+    const t = Math.max(MIN_THICK / 2, raw[2] ?? MIN_THICK);
+    const size: Vec3 = face.axis === 0 ? [t, small, big] : [small, t, big];
+    const pos: Vec3 = [...parent.pos];
+    pos[face.axis] += face.sign * (parent.size[face.axis] / 2 + t / 2);
+    add(it.p, it.copy, pos, size);
+  }
+  return rest;
+}
+
+const STACK_GAP = 0.003;
+const STACK_MIN_THICK = 0.004;
+type Item = { p: ArchetypePart; copy: number; size: Vec3 };
+
+/** Fallback for a tall, narrow parent (a CubeSat frame): stack the children in layers
+ * inside it, like a board stack. Thin plates use their own thickness here. Returns
+ * null when they do not fit. */
+function stackLayers(items: Item[], w: number, d: number, h: number) {
+  const maxW = w * 0.92;
+  const maxD = d * 0.92;
+  const sized = items.map(it => {
+    const raw = it.p.dims_m?.[2];
+    const thin = it.p.shape === 'plate' && raw && raw > 0 ? Math.max(STACK_MIN_THICK, raw) : it.size[2];
+    return { ...it, size: [it.size[0], it.size[1], thin] as Vec3 };
+  });
+  if (sized.some(it => it.size[0] > maxW || it.size[1] > maxD)) return null;
+  const list: { items: Item[]; offs: [number, number][]; height: number }[] = [];
+  for (const it of sized) {
+    const cur = list[list.length - 1];
+    if (cur) {
+      const trial = [...cur.items, it];
+      const offs = shelfPack(trial.map(t => [t.size[0], t.size[1]]), maxW, STACK_GAP);
+      const depth = Math.max(...offs.map((o, i) => Math.abs(o[1]) + trial[i].size[1] / 2)) * 2;
+      if (depth <= maxD) {
+        cur.items = trial;
+        cur.offs = offs;
+        cur.height = Math.max(cur.height, it.size[2]);
+        continue;
+      }
+    }
+    list.push({ items: [it], offs: [[0, 0]], height: it.size[2] });
+  }
+  const total = list.reduce((a, l) => a + l.height, 0) + STACK_GAP * (list.length - 1);
+  return total <= h * 0.95 ? { list, total } : null;
+}
+
 const isWing = (p: ArchetypePart) => p.shape === 'plate' && /solar/i.test(p.name);
 const totalMass = (p: ArchetypePart) => (p.mass_kg || 0) * Math.max(1, p.count || 1);
 
@@ -161,8 +239,12 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
     const byParent = new Map<string, ArchetypePart[]>();
     for (const p of ready) byParent.set(p.parent!, [...(byParent.get(p.parent!) ?? []), p]);
     for (const [parentName, kids] of byParent) {
+      let items = kids.flatMap(p => Array.from({ length: copies(p) }, (_, i) => ({ p, copy: i, size: sizeOf(p).size })));
+      const parentPieces = pieces.filter(q => q.part === parentName);
+      if (parentPieces.length === 1 && parentPieces[0].shape === 'box') items = mountOnFaces(parentPieces[0], items, add);
+      for (const p of kids) placed.add(p.name);
+      if (!items.length) continue;
       const pb = groupBox(parentName);
-      const items = kids.flatMap(p => Array.from({ length: copies(p) }, (_, i) => ({ p, copy: i, size: sizeOf(p).size })));
       const w = pb.max[0] - pb.min[0];
       const d = pb.max[1] - pb.min[1];
       const h = pb.max[2] - pb.min[2];
@@ -172,12 +254,23 @@ export function layoutParts(parts: ArchetypePart[]): { pieces: Piece[]; bounds: 
       const inside = tall < h * 0.9 && packedD <= d;
       const cx = (pb.min[0] + pb.max[0]) / 2;
       const cy = (pb.min[1] + pb.max[1]) / 2;
+      if (!inside) {
+        const layers = stackLayers(items, w, d, h);
+        if (layers) {
+          let z = pb.min[2] + (h - layers.total) / 2;
+          for (const layer of layers.list) {
+            layer.items.forEach((it, i) => add(it.p, it.copy, [cx + layer.offs[i][0], cy + layer.offs[i][1], z + layer.height / 2], it.size));
+            z += layer.height + STACK_GAP;
+          }
+          for (const q of pieces) if (q.part === parentName) q.translucent = true;
+          continue;
+        }
+      }
       items.forEach((it, i) => {
         const z = inside ? (pb.min[2] + pb.max[2]) / 2 : pb.max[2] + GAP + it.size[2] / 2;
         add(it.p, it.copy, [cx + offs[i][0], cy + offs[i][1], z]);
       });
       if (inside) for (const q of pieces) if (q.part === parentName) q.translucent = true;
-      for (const p of kids) placed.add(p.name);
     }
   }
   return { pieces, bounds: union(pieces.map(boxOf)) };
