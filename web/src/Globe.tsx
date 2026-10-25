@@ -11,10 +11,12 @@ import { Legend } from './globe/legend.tsx';
 import { SatModelPanel } from './globe/SatModelPanel.tsx';
 import { useDetailedMap } from './globe/mapLayers.ts';
 import { MapControls } from './globe/mapControls.tsx';
+import { useOrbitControls } from './globe/orbitControls.ts';
 
 function Layers() {
   const viewer = useViewer();
   useDetailedMap(viewer); // Esri imagery + terrain (falls back to the offline globe)
+  useOrbitControls(viewer); // drag pivots: Earth's center, ground point or the selected satellite
   const { objects, reentry } = useTrackedObjects();
   useSatelliteLayer(viewer, objects, reentry); // G1
   useClickToSelect(viewer); // G1

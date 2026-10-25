@@ -29,7 +29,7 @@ import { resetClock } from './cesium-setup.ts';
 const PATH_HOURS = 3;
 const PATH_STEP_S = 60;
 const PATH_REFRESH_S = 300; // recompute the path when the clock moves this far
-const trackId = (id: string) => `selected-track:${id}`;
+export const trackId = (id: string) => `selected-track:${id}`;
 
 // Object the camera should stay locked on. Its entity may not exist yet when
 // "Fly to" is clicked (selection effects run after render), so remember it.
