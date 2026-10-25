@@ -21,7 +21,7 @@ import {
   type Viewer,
 } from 'cesium';
 import type { DebrisComponent, DebrisResult } from './debrisTypes.ts';
-import { hovered, materialColor, onlySurvivors, pickInfo, registerPick, showWarnings, visibleComponents } from './debrisPick.ts';
+import { focusedPart, hovered, materialColor, onlySurvivors, pickInfo, registerPick, showWarnings, visibleComponents } from './debrisPick.ts';
 import { useImpactZones } from './impactZones.ts';
 import { DebrisOverlay } from './debrisOverlay.tsx';
 import { breakupMs, useWarningLayer, WARNING_WINDOW_MS } from './warningLevels.ts';
@@ -161,19 +161,21 @@ function useDebrisPicking(viewer: Viewer | null): void {
 
 export function useDebrisLines(viewer: Viewer | null, debris: DebrisResult | null): ReactElement | null {
   const only = onlySurvivors.use();
-  useImpactZones(viewer, debris, only);
+  const focus = focusedPart.use()?.name ?? null;
+  useImpactZones(viewer, debris, only, focus);
   useDebrisPicking(viewer);
 
   useEffect(() => {
     if (!viewer || !debris) return;
     const ds = new CustomDataSource('g2-debris-lines');
     viewer.dataSources.add(ds);
-    addLines(ds, viewer, debris, visibleComponents(debris.components, only));
+    addLines(ds, viewer, debris, visibleComponents(debris.components, only, focus));
     return () => {
-      hovered.set(null);
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
     };
-  }, [viewer, debris, only]);
+  }, [viewer, debris, only, focus]);
+  // The tooltip belongs to the selected object's debris: drop it when that changes.
+  useEffect(() => () => hovered.set(null), [viewer, debris, only]);
 
   const warningAllowed = useWithinWarningWindow(viewer, debris);
   const warn = showWarnings.use();
